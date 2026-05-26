@@ -1,0 +1,37 @@
+[project]
+name = "compass"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+# Not a pip-installable package yet — compass/ is created in Stage 2+.
+# This avoids requiring a build-system table while keeping `uv sync` working.
+package = false
+
+[dependency-groups]
+dev = [
+    "ruff==0.15.14",
+    "pyright==1.1.409",
+    "pytest==9.0.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PL"]
+
+[tool.ruff.format]
+# Black-compatible defaults.
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+exclude = ["**/.venv", "**/__pycache__", "**/generated"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
