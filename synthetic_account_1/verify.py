@@ -144,23 +144,8 @@ def check_invoice_total_matches_lines(
 def check_contracts_validate(contracts: list[dict[str, Any]]) -> None:
     """Build-plan line 118: 'rejected at load time'. Verify the property holds."""
     for c in contracts:
-        # Reconstruct the validation payload — the JSONL row has flattened
-        # rate_overrides + monthly_hour_cap on top of billing_structure,
-        # but Contract validates the discriminated billing_structure
-        # directly.
-        payload = {
-            "id": c["id"],
-            "customer_id": c["customer_id"],
-            "kind": c["kind"],
-            "effective_from": c["effective_from"],
-            "expires_at": c.get("expires_at"),
-            "currency": c["currency"],
-            "billing_structure": c["billing_structure"],
-            "scope_summary": c["scope_summary"],
-            "source_doc_ref": c.get("source_doc_ref"),
-        }
         try:
-            Contract.model_validate(payload)
+            Contract.model_validate(c)
         except ValidationError as exc:
             raise VerifyError(f"contract {c['id']} failed Pydantic validation: {exc}") from exc
 

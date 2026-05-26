@@ -418,6 +418,14 @@ def _generate_contracts(
             source_doc_ref = f"s3://bramble-contracts/contract_{i + 1:04d}.pdf"
 
         contract_id = f"contract_{i + 1:04d}"
+        # Flatten rate_overrides + monthly_hour_cap from T&M billing to
+        # top-level, matching the Postgres schema top-level columns.
+        billing_dump = billing.model_dump(mode="json")
+        rate_overrides_top: list[RateOverride] = []
+        monthly_hour_cap_top: int | None = None
+        if isinstance(billing, TimeAndMaterials):
+            rate_overrides_top = list(billing.rate_overrides)
+            monthly_hour_cap_top = billing.monthly_hour_cap
         model = Contract(
             id=contract_id,
             customer_id=cast(str, customer["id"]),
@@ -426,21 +434,15 @@ def _generate_contracts(
             expires_at=expires,
             currency=currency,
             billing_structure=billing,
+            rate_overrides=rate_overrides_top,
+            monthly_hour_cap=monthly_hour_cap_top,
             scope_summary=scope,
             source_doc_ref=source_doc_ref,
         )
         models.append(model)
 
-        # Flatten for the JSONL row. monthly_hour_cap + rate_overrides
-        # are surfaced as top-level columns to match the Postgres
-        # schema, while billing_structure carries the full discriminated
-        # union for the policy engine to consume.
-        billing_dump = billing.model_dump(mode="json")
-        rate_overrides_dump: list[dict[str, Any]] = []
-        monthly_hour_cap: int | None = None
-        if isinstance(billing, TimeAndMaterials):
-            rate_overrides_dump = [o.model_dump(mode="json") for o in billing.rate_overrides]
-            monthly_hour_cap = billing.monthly_hour_cap
+        rate_overrides_dump = [o.model_dump(mode="json") for o in rate_overrides_top]
+        monthly_hour_cap = monthly_hour_cap_top
 
         rows.append(
             {

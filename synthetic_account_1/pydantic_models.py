@@ -108,6 +108,8 @@ class Contract(BaseModel):
     expires_at: date | None = None
     currency: str = Field(min_length=3, max_length=3)
     billing_structure: BillingStructure
+    rate_overrides: list[RateOverride] = Field(default_factory=list[RateOverride])
+    monthly_hour_cap: int | None = None
     scope_summary: str = Field(min_length=1)
     source_doc_ref: str | None = None
 

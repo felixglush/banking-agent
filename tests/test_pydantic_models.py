@@ -18,6 +18,7 @@ from synthetic_account_1.pydantic_models import (
     FlatFeeSOW,
     Milestone,
     MonthlyRetainer,
+    RateOverride,
     TimeAndMaterials,
 )
 
@@ -118,3 +119,90 @@ def test_extra_fields_forbidden_on_contract() -> None:
 def test_t_and_m_with_cap_accepted() -> None:
     tm = TimeAndMaterials(rate_overrides=[], monthly_hour_cap=40, list_rates_apply=True)
     assert tm.monthly_hour_cap == 40
+
+
+def test_contract_top_level_rate_overrides_accepted() -> None:
+    overrides = [RateOverride(role="Engineer", unit="hour", amount_cents=20_000)]
+    c = Contract(
+        id="contract_test_002",
+        customer_id="cust_0001",
+        kind="msa",
+        effective_from=date(2025, 1, 1),
+        expires_at=date(2026, 1, 1),
+        currency="USD",
+        billing_structure=TimeAndMaterials(
+            rate_overrides=overrides,
+            monthly_hour_cap=None,
+            list_rates_apply=True,
+        ),
+        rate_overrides=overrides,
+        monthly_hour_cap=None,
+        scope_summary="T&M with negotiated engineer rate.",
+    )
+    assert len(c.rate_overrides) == 1
+    assert c.rate_overrides[0].role == "Engineer"
+    assert c.monthly_hour_cap is None
+
+
+def test_contract_top_level_monthly_hour_cap_null_accepted() -> None:
+    c = Contract(
+        id="contract_test_003",
+        customer_id="cust_0002",
+        kind="msa",
+        effective_from=date(2025, 1, 1),
+        expires_at=date(2026, 1, 1),
+        currency="USD",
+        billing_structure=TimeAndMaterials(
+            rate_overrides=[],
+            monthly_hour_cap=None,
+            list_rates_apply=True,
+        ),
+        rate_overrides=[],
+        monthly_hour_cap=None,
+        scope_summary="T&M list rates only.",
+    )
+    assert c.monthly_hour_cap is None
+
+
+def test_contract_top_level_monthly_hour_cap_set_accepted() -> None:
+    c = Contract(
+        id="contract_test_004",
+        customer_id="cust_0003",
+        kind="msa",
+        effective_from=date(2025, 1, 1),
+        expires_at=date(2026, 1, 1),
+        currency="USD",
+        billing_structure=TimeAndMaterials(
+            rate_overrides=[],
+            monthly_hour_cap=80,
+            list_rates_apply=True,
+        ),
+        rate_overrides=[],
+        monthly_hour_cap=80,
+        scope_summary="T&M with monthly cap.",
+    )
+    assert c.monthly_hour_cap == 80
+
+
+def test_contract_model_validate_full_jsonl_row() -> None:
+    """Contract.model_validate accepts the full JSONL row shape (as verify.py now does)."""
+    row = {
+        "id": "contract_test_005",
+        "customer_id": "cust_0004",
+        "kind": "msa",
+        "effective_from": "2025-01-01",
+        "expires_at": "2026-01-01",
+        "currency": "USD",
+        "billing_structure": {
+            "kind": "t_and_m",
+            "rate_overrides": [{"role": "Analyst", "unit": "hour", "amount_cents": 15_000}],
+            "monthly_hour_cap": None,
+            "list_rates_apply": True,
+        },
+        "rate_overrides": [{"role": "Analyst", "unit": "hour", "amount_cents": 15_000}],
+        "monthly_hour_cap": None,
+        "scope_summary": "Full row validation.",
+        "source_doc_ref": None,
+    }
+    c = Contract.model_validate(row)
+    assert c.rate_overrides[0].role == "Analyst"
