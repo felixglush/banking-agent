@@ -1,0 +1,108 @@
+# Customer generator parameters. Names are drawn from a fixed pool so
+# the output is deterministic without depending on Python's hash seed.
+
+target_count: 120
+acv_log_normal_mu: 10.2     # ln($26k)
+acv_log_normal_sigma: 0.6   # gives a long-tail mean near $33k
+kyc_status_weights:
+  verified: 0.85
+  pending: 0.08
+  restricted: 0.05
+  rejected: 0.02
+default_payment_terms_options: [15, 30, 45, 60]
+default_payment_terms_weights: [0.10, 0.55, 0.20, 0.15]
+
+cohorts:
+  - name: "enterprise"
+    weight: 0.15
+    acv_multiplier: 4.0
+    contract_kinds: ["msa", "sow"]
+  - name: "mid_market"
+    weight: 0.35
+    acv_multiplier: 1.2
+    contract_kinds: ["msa", "retainer"]
+  - name: "smb"
+    weight: 0.50
+    acv_multiplier: 0.4
+    contract_kinds: ["retainer"]
+
+# Pool of base company-name tokens used to construct customer names.
+# Two-token combinations give >500 unique possibilities — plenty of
+# room for 120 customers plus an ambiguous-name subset.
+name_tokens_left:
+  - "Acme"
+  - "Northwind"
+  - "Globex"
+  - "Initech"
+  - "Hooli"
+  - "Pied Piper"
+  - "Vandelay"
+  - "Soylent"
+  - "Cyberdyne"
+  - "Stark"
+  - "Wayne"
+  - "Wonka"
+  - "Tyrell"
+  - "Massive Dynamic"
+  - "Oscorp"
+  - "Umbrella"
+  - "Aperture"
+  - "Black Mesa"
+  - "Gekko"
+  - "Bluth"
+  - "Dunder"
+  - "Sterling"
+  - "Pearson"
+  - "Pendant"
+  - "Pemberton"
+  - "Wernham"
+  - "Sabre"
+  - "Bishop"
+  - "Pinwheel"
+  - "Halcyon"
+  - "Meridian"
+  - "Arrowhead"
+
+name_tokens_right:
+  - "Labs"
+  - "Systems"
+  - "Industries"
+  - "Networks"
+  - "Solutions"
+  - "Holdings"
+  - "Partners"
+  - "Group"
+  - "Logistics"
+  - "Capital"
+  - "Studios"
+  - "Works"
+  - "Technologies"
+  - "Robotics"
+  - "Analytics"
+  - "Health"
+  - "Bio"
+  - "Energy"
+  - "Logistics"
+  - "Media"
+
+street_names:
+  - "Main"
+  - "Market"
+  - "Elm"
+  - "Oak"
+  - "Park"
+  - "Cedar"
+  - "Maple"
+  - "Pine"
+  - "Lake"
+  - "Hill"
+
+cities:
+  - ["San Francisco", "CA", "94103"]
+  - ["New York", "NY", "10001"]
+  - ["Austin", "TX", "78701"]
+  - ["Seattle", "WA", "98101"]
+  - ["Boston", "MA", "02108"]
+  - ["Chicago", "IL", "60601"]
+  - ["Denver", "CO", "80202"]
+  - ["Atlanta", "GA", "30303"]
