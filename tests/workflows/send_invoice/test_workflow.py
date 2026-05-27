@@ -1,0 +1,221 @@
+"""Workflow-level tests for ``SendInvoiceWorkflow``.
+
+These tests do NOT exercise OpenAI, MCP, or any real reasoning. The
+agent is wired with a ``TestModel`` whose response is a canned JSON
+``InvoiceProposal``. The point is to lock in the orchestration: did
+each activity fire, in the right order, with the right idempotency
+guarantees, ending in the right ``WorkflowResult``.
+"""
+
+import json
+import os
+import uuid
+from typing import Any
+
+import psycopg
+import pytest
+from psycopg.rows import dict_row
+from temporalio.client import Client
+from temporalio.contrib.openai_agents.testing import ResponseBuilders, TestModel
+from temporalio.worker import Worker
+
+from tests.workflows.send_invoice.conftest import TASK_QUEUE, proposal_dict
+from workflows.send_invoice.types import (
+    ApprovalDecision,
+    SendInvoiceRequest,
+    WorkflowResult,
+)
+from workflows.send_invoice.workflow import SendInvoiceWorkflow
+
+
+def _proposal_response(proposal: dict[str, Any] | None = None) -> TestModel:
+    """A model that always returns the given proposal as a final message.
+
+    The Agents SDK parses the assistant's text content against
+    ``output_type=InvoiceProposal`` to recover the structured output;
+    a one-shot JSON message is the simplest fake-model shape.
+    """
+    payload = proposal if proposal is not None else proposal_dict()
+    text = json.dumps(payload)
+    return TestModel(lambda: ResponseBuilders.output_message(text))
+
+
+def _new_workflow_id() -> str:
+    return f"test-send-invoice-{uuid.uuid4().hex[:8]}"
+
+
+@pytest.fixture
+def model() -> TestModel:
+    return _proposal_response()
+
+
+async def test_happy_path_writes_invoice_and_full_audit(
+    temporal_client: Client,
+    worker: Worker,  # noqa: ARG001 — used for side effect
+) -> None:
+    workflow_id = _new_workflow_id()
+    handle = await temporal_client.start_workflow(
+        SendInvoiceWorkflow.run,
+        SendInvoiceRequest(user_message="invoice Acme for last quarter"),
+        id=workflow_id,
+        task_queue=TASK_QUEUE,
+    )
+    await handle.signal(
+        SendInvoiceWorkflow.approve,
+        ApprovalDecision(approved=True, approver_id="alice"),
+    )
+    result: WorkflowResult = await handle.result()
+    assert result.outcome == "sent"
+    assert result.invoice_id == f"inv-{workflow_id}"
+
+    rows = await _fetch_audit(workflow_id)
+    kinds = [r["event_kind"] for r in rows]
+    assert kinds == ["proposal", "approval_signal", "executed"]
+    assert [r["phase"] for r in rows] == [
+        "pre_action_proposal",
+        "pre_execute",
+        "audit_validation",
+    ]
+    # actor captured for human-driven events, not for the policy "proposal" row
+    assert rows[0]["actor"] is None
+    assert rows[1]["actor"] == {"user_id": "alice", "auth_method": "demo_cli"}
+    assert rows[2]["actor"] == {"user_id": "alice", "auth_method": "demo_cli"}
+
+    invoice = await _fetch_invoice(workflow_id)
+    assert invoice is not None
+    assert invoice["customer_id"] == "cust_alpha"
+    assert invoice["total_cents"] == 80000
+    assert invoice["status"] == "sent"
+    line_items = await _fetch_invoice_line_items(workflow_id)
+    assert len(line_items) == 1
+    assert line_items[0]["description"] == "Solutions Architect time"
+
+
+async def test_declined_records_audit_and_skips_send(
+    temporal_client: Client,
+    worker: Worker,  # noqa: ARG001
+) -> None:
+    workflow_id = _new_workflow_id()
+    handle = await temporal_client.start_workflow(
+        SendInvoiceWorkflow.run,
+        SendInvoiceRequest(user_message="invoice Acme for last quarter"),
+        id=workflow_id,
+        task_queue=TASK_QUEUE,
+    )
+    await handle.signal(
+        SendInvoiceWorkflow.approve,
+        ApprovalDecision(approved=False, approver_id="alice", notes="scope mismatch"),
+    )
+    result: WorkflowResult = await handle.result()
+    assert result.outcome == "declined"
+    assert result.invoice_id is None
+    rows = await _fetch_audit(workflow_id)
+    kinds = [r["event_kind"] for r in rows]
+    assert kinds == ["proposal", "approval_signal", "declined"]
+    # never reached execute_send → no row in invoices
+    invoice = await _fetch_invoice(workflow_id)
+    assert invoice is None
+
+
+async def test_approval_timeout_records_audit_and_skips_send(
+    temporal_client: Client,
+    worker: Worker,  # noqa: ARG001
+) -> None:
+    workflow_id = _new_workflow_id()
+    handle = await temporal_client.start_workflow(
+        SendInvoiceWorkflow.run,
+        SendInvoiceRequest(
+            user_message="invoice Acme for last quarter",
+            approval_timeout_seconds=60,
+        ),
+        id=workflow_id,
+        task_queue=TASK_QUEUE,
+    )
+    # time-skipping env advances time when no work is pending — the
+    # wait_condition will trip without us sleeping in real time.
+    result: WorkflowResult = await handle.result()
+    assert result.outcome == "timeout"
+    assert result.invoice_id is None
+    rows = await _fetch_audit(workflow_id)
+    assert [r["event_kind"] for r in rows] == ["proposal", "declined"]
+    assert rows[1]["payload"] == {"reason": "approval_timeout"}
+
+
+async def test_duplicate_signal_is_logged_and_ignored(
+    temporal_client: Client,
+    worker: Worker,  # noqa: ARG001
+) -> None:
+    workflow_id = _new_workflow_id()
+    handle = await temporal_client.start_workflow(
+        SendInvoiceWorkflow.run,
+        SendInvoiceRequest(user_message="invoice Acme for last quarter"),
+        id=workflow_id,
+        task_queue=TASK_QUEUE,
+    )
+    await handle.signal(
+        SendInvoiceWorkflow.approve,
+        ApprovalDecision(approved=True, approver_id="alice"),
+    )
+    # second signal lands after the first; should not override the outcome
+    await handle.signal(
+        SendInvoiceWorkflow.approve,
+        ApprovalDecision(approved=False, approver_id="bob", notes="too late"),
+    )
+    result: WorkflowResult = await handle.result()
+    assert result.outcome == "sent"
+    rows = await _fetch_audit(workflow_id)
+    duplicates = [r for r in rows if r["event_kind"] == "duplicate_approval_signal"]
+    assert len(duplicates) == 1
+    assert duplicates[0]["payload"]["received"]["approver_id"] == "bob"
+
+
+# ---------------------------------------------------------------------
+# DB helpers — direct queries against the same compass_test database
+# the workflow's activities just wrote to.
+# ---------------------------------------------------------------------
+
+
+def _dsn() -> str:
+    return os.environ["COMPASS_PG_DSN"]
+
+
+async def _fetch_audit(workflow_run_id: str) -> list[dict[str, Any]]:
+    async with (
+        await psycopg.AsyncConnection.connect(_dsn()) as conn,
+        conn.cursor(row_factory=dict_row) as cur,
+    ):
+        await cur.execute(
+            """
+            SELECT workflow_run_id, sequence_no, phase, event_kind, rule_id,
+                   policy_hash, decision, actor, payload
+            FROM audit_log
+            WHERE workflow_run_id = %s
+            ORDER BY sequence_no
+            """,
+            (workflow_run_id,),
+        )
+        return await cur.fetchall()
+
+
+async def _fetch_invoice(workflow_run_id: str) -> dict[str, Any] | None:
+    async with (
+        await psycopg.AsyncConnection.connect(_dsn()) as conn,
+        conn.cursor(row_factory=dict_row) as cur,
+    ):
+        await cur.execute(
+            "SELECT * FROM invoices WHERE id = %s",
+            (f"inv-{workflow_run_id}",),
+        )
+        return await cur.fetchone()
+
+
+async def _fetch_invoice_line_items(workflow_run_id: str) -> list[dict[str, Any]]:
+    async with (
+        await psycopg.AsyncConnection.connect(_dsn()) as conn,
+        conn.cursor(row_factory=dict_row) as cur,
+    ):
+        await cur.execute(
+            "SELECT * FROM invoice_line_items WHERE invoice_id = %s ORDER BY line_no",
+            (f"inv-{workflow_run_id}",),
+        )
+        return await cur.fetchall()

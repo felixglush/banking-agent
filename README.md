@@ -18,7 +18,7 @@ uv sync
 
 ## Generate synthetic data
 
-The Stage-2 deliverable: a procedural, deterministic-from-seed synthetic bank
+A procedural, deterministic-from-seed synthetic bank
 ("Synthetic Account 1") with banking + invoicing + customers + rate cards +
 contracts, plus ground-truth labels for v0.1 evals.
 
@@ -48,8 +48,13 @@ banking-agent/
 │   └── build-plan.md        # full project plan
 ├── db/
 │   └── schema.sql           # shared Postgres DDL
-└── synthetic_account_1/     # data generator (Stage 2)
+├── synthetic_account_1/     # data generator
+├── mcp_bank/                # read-only MCP over the bank dataset
+├── workflows/
+│   └── send_invoice/        # Temporal + Agents SDK workflow
+├── scripts/                 # workflow start / approve CLIs
+└── tests/                   # workflow + MCP functional tests
 ```
 
-Subsequent stages add `compass/` (framework), `workflows/`, `mcp_bank/`, and
-`evals/` — see the build plan.
+Subsequent stages add `compass/` (policy + eval framework) and the rest of
+`workflows/` — see the build plan.
