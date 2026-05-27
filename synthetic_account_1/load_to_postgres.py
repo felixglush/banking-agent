@@ -18,8 +18,6 @@ Run as a module::
     COMPASS_PG_DSN=postgres://... uv run python -m synthetic_account_1.load_to_postgres
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import os

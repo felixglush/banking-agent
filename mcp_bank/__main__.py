@@ -6,8 +6,6 @@ The Temporal worker spawns this via ``MCPServerStdio(name="bank", params=...)``
     uv run python -m mcp_bank
 """
 
-from __future__ import annotations
-
 from mcp_bank.server import mcp
 
 

@@ -9,8 +9,6 @@ Run as a module so paths resolve relative to the package directory::
     uv run python -m synthetic_account_1.verify
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from collections.abc import Callable, Iterator

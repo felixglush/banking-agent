@@ -9,8 +9,6 @@ No raw-SQL or query-builder tool is exposed — see
 docs/build-plan.md §Stage 3 and §Validation Criteria 2.
 """
 
-from __future__ import annotations
-
 from datetime import date
 
 from fastmcp import FastMCP
