@@ -24,25 +24,46 @@ from typing import Any
 
 
 def extract_tool_calls(run_result: Any) -> list[dict[str, Any]]:
-    """Return [{tool_name, args, result}, ...] for each tool call."""
-    out: list[dict[str, Any]] = []
+    """Return [{tool_name, args, result}, ...] for each tool call.
+
+    The SDK emits a ``tool_call_item`` (with name+arguments on raw_item)
+    followed by a ``tool_call_output_item`` (with output on raw_item)
+    for each completed call. We pair them by ``call_id`` so each entry
+    carries name, args, and result. Calls without a paired output (e.g.
+    cancelled) are dropped.
+    """
     items = getattr(run_result, "new_items", None) or []
+    calls: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
     for item in items:
-        # The SDK uses ``type="tool_call_output_item"`` for tool results.
-        if getattr(item, "type", None) != "tool_call_output_item":
-            continue
-        raw = getattr(item, "raw_item", item)
-        name = getattr(raw, "name", None)
-        if not name:
-            continue
-        args_raw = getattr(raw, "arguments", None)
-        output_raw = getattr(raw, "output", None)
-        out.append({
-            "tool_name": name,
-            "args": _maybe_json(args_raw),
-            "result": _maybe_json(output_raw),
-        })
-    return out
+        kind = getattr(item, "type", None)
+        if kind == "tool_call_item":
+            raw = getattr(item, "raw_item", item)
+            name = _attr_or_key(raw, "name")
+            call_id = _attr_or_key(raw, "call_id") or _attr_or_key(raw, "id")
+            if not name or not call_id:
+                continue
+            args_raw = _attr_or_key(raw, "arguments")
+            calls[call_id] = {
+                "tool_name": name,
+                "args": _maybe_json(args_raw),
+                "result": None,
+            }
+            order.append(call_id)
+        elif kind == "tool_call_output_item":
+            raw = getattr(item, "raw_item", item)
+            call_id = _attr_or_key(raw, "call_id") or _attr_or_key(raw, "id")
+            output_raw = _attr_or_key(raw, "output") or getattr(item, "output", None)
+            if call_id and call_id in calls:
+                calls[call_id]["result"] = _maybe_json(output_raw)
+    return [calls[cid] for cid in order]
+
+
+def _attr_or_key(obj: Any, key: str) -> Any:
+    """Read either obj.key (dataclass / model) or obj[key] (dict)."""
+    if isinstance(obj, dict):
+        return obj.get(key)
+    return getattr(obj, key, None)
 
 
 def project_resolved_entities(tool_calls: list[dict[str, Any]]) -> dict[str, Any]:

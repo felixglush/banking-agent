@@ -26,7 +26,7 @@ from datetime import timedelta
 from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.contrib.openai_agents.workflow import stateful_mcp_server
-from temporalio.exceptions import ApplicationError
+from temporalio.exceptions import ActivityError, ApplicationError
 from temporalio.workflow import ActivityConfig
 
 with workflow.unsafe.imports_passed_through():
@@ -132,12 +132,18 @@ class SendInvoiceWorkflow:
                 start_to_close_timeout=timedelta(seconds=60),
                 retry_policy=_POLICY_DECISION_RETRY,
             )
-        except ApplicationError as e:
-            self._next_seq += 1  # the activity reserved at least one seq for an audit row
+        except ActivityError as e:
+            # Temporal wraps the activity's ApplicationError in ActivityError;
+            # unwrap to read the type the activity assigned.
+            cause = e.cause if isinstance(e.cause, ApplicationError) else None
+            err_type = cause.type if cause else None
+            # The activity may have reserved sequence numbers for rule events
+            # it wrote before raising; advance past them conservatively.
+            self._next_seq += 12  # at most 12 rules in the policy at stage 5
             await self._audit(
                 phase="pre_action_proposal",
                 event_kind="policy_rejected",
-                payload={"error_type": e.type, "message": str(e)},
+                payload={"error_type": err_type, "message": str(e)},
                 decision="block",
             )
             return WorkflowResult(outcome="policy_rejected", detail=str(e))
@@ -200,12 +206,14 @@ class SendInvoiceWorkflow:
                 retry_policy=_POLICY_DECISION_RETRY,
             )
             self._next_seq = payload.next_sequence_no - 1
-        except ApplicationError as e:
-            self._next_seq += 1
+        except ActivityError as e:
+            cause = e.cause if isinstance(e.cause, ApplicationError) else None
+            err_type = cause.type if cause else None
+            self._next_seq += 4  # at most 2 pre_execute rules
             await self._audit(
                 phase="pre_execute",
                 event_kind="policy_rejected",
-                payload={"error_type": e.type, "message": str(e)},
+                payload={"error_type": err_type, "message": str(e)},
                 decision="block",
                 actor={"user_id": approval.approver_id, "auth_method": "demo_cli"},
             )

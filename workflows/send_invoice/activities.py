@@ -122,29 +122,28 @@ async def audit_log(event: AuditEvent) -> None:
     audit trail isn't lost. The rule_fired row stays in the log for
     later analysis.
     """
+    policy_disabled = os.environ.get("COMPASS_POLICY_DISABLE") == "1"
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         try:
             async with conn.cursor() as cur:
-                if event.is_terminal_event and os.environ.get(
-                    "COMPASS_POLICY_DISABLE"
-                ) != "1":
-                    # Run audit_validation rules against the candidate.
-                    candidate = {
-                        "phase": event.phase,
-                        "event_kind": event.event_kind,
-                        "payload": event.payload,
-                    }
+                if event.is_terminal_event and not policy_disabled:
+                    # Run audit_validation rules; their rule_fired/skipped
+                    # rows are written via AuditLogSink starting one past
+                    # the terminal row's reserved slot.
                     ctx = {
-                        "audit_entry_candidate": candidate,
+                        "audit_entry_candidate": {
+                            "phase": event.phase,
+                            "event_kind": event.event_kind,
+                            "payload": event.payload,
+                        },
                         "policy_hash": event.policy_hash_for_validation,
                         "tool_calls": event.tool_calls_for_validation,
                         "reasoning_text": event.reasoning_text_for_validation,
                     }
-                    allocator = SequenceAllocator(event.sequence_no + 1)
                     sink = AuditLogSink(
                         conn,
                         event.workflow_run_id,
-                        allocator,
+                        SequenceAllocator(event.sequence_no + 1),
                         event.policy_hash_for_validation or "unknown",
                     )
                     try:
@@ -157,18 +156,9 @@ async def audit_log(event: AuditEvent) -> None:
                             type="PolicyEngineError",
                             non_retryable=not e.retryable,
                         ) from e
-                    # Terminal row written AFTER the rule_fired events
-                    # so its sequence_no slot is reserved. We use the
-                    # passed sequence_no as-is.
-                    await _write_audit_row(
-                        cur, event, policy_hash=event.policy_hash_for_validation,
-                    )
-                else:
-                    # Non-terminal events, or terminal events when policy
-                    # is bypassed via the eval ablation hatch.
-                    await _write_audit_row(
-                        cur, event, policy_hash=event.policy_hash_for_validation,
-                    )
+                await _write_audit_row(
+                    cur, event, policy_hash=event.policy_hash_for_validation,
+                )
             await conn.commit()
         except psycopg.Error as e:
             raise ApplicationError(

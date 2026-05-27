@@ -21,19 +21,24 @@ from workflows.send_invoice.context import (
 # ---------------------------------------------------------------------
 
 
-def _tool_call_item(name: str, args: dict[str, Any], output: Any) -> SimpleNamespace:
-    """Build a SimpleNamespace shaped like the SDK's ToolCallOutputItem.
+def _tool_call_item(
+    name: str, args: dict[str, Any], output: Any, *, call_id: str | None = None,
+) -> list[SimpleNamespace]:
+    """Build the (tool_call_item, tool_call_output_item) pair the SDK emits.
 
-    The SDK exposes ``raw_item.name``, ``raw_item.arguments``, and
-    ``raw_item.output`` (or similar) on tool-call items; the extractor
-    code does duck-typed access and converts JSON strings if needed.
+    extract_tool_calls pairs them by call_id; we return both as one
+    list so call sites can spread into _run_result(...).
     """
-    raw = SimpleNamespace(
-        name=name,
-        arguments=json.dumps(args),
+    cid = call_id or f"call_{name}"
+    call_raw = SimpleNamespace(name=name, arguments=json.dumps(args), call_id=cid)
+    output_raw = SimpleNamespace(
+        call_id=cid,
         output=json.dumps(output) if not isinstance(output, str) else output,
     )
-    return SimpleNamespace(type="tool_call_output_item", raw_item=raw)
+    return [
+        SimpleNamespace(type="tool_call_item", raw_item=call_raw),
+        SimpleNamespace(type="tool_call_output_item", raw_item=output_raw),
+    ]
 
 
 def _message_item(role: str, text: str) -> SimpleNamespace:
@@ -52,22 +57,24 @@ def _run_result(items: list[SimpleNamespace]) -> SimpleNamespace:
 
 def test_extract_tool_calls_returns_one_per_call() -> None:
     rr = _run_result([
-        _tool_call_item("list_customers", {"name": "Acme"},
-                        [{"id": "cust_alpha"}]),
-        _tool_call_item("get_active_contract",
-                        {"customer_id": "cust_alpha"},
-                        {"id": "ct_alpha"}),
+        *_tool_call_item("list_customers", {"name": "Acme"},
+                         [{"id": "cust_alpha"}]),
+        *_tool_call_item("get_active_contract",
+                         {"customer_id": "cust_alpha"},
+                         {"id": "ct_alpha"}),
     ])
     calls = extract_tool_calls(rr)
     assert len(calls) == 2
     assert calls[0]["tool_name"] == "list_customers"
+    assert calls[0]["result"] == [{"id": "cust_alpha"}]
     assert calls[1]["tool_name"] == "get_active_contract"
+    assert calls[1]["result"] == {"id": "ct_alpha"}
 
 
 def test_extract_tool_calls_strips_non_tool_items() -> None:
     rr = _run_result([
         _message_item("assistant", "thinking..."),
-        _tool_call_item("list_customers", {}, []),
+        *_tool_call_item("list_customers", {}, []),
     ])
     calls = extract_tool_calls(rr)
     assert [c["tool_name"] for c in calls] == ["list_customers"]
@@ -158,7 +165,7 @@ def test_project_time_entries_collected() -> None:
 def test_extract_reasoning_joins_assistant_messages() -> None:
     rr = _run_result([
         _message_item("assistant", "looking up customer"),
-        _tool_call_item("list_customers", {}, []),
+        *_tool_call_item("list_customers", {}, []),
         _message_item("assistant", "found it"),
     ])
     text = extract_reasoning_text(rr)
