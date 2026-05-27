@@ -16,7 +16,12 @@ from agents.mcp.server import MCPServer
 
 from workflows.send_invoice.types import InvoiceProposal
 
-DEFAULT_MODEL = "gpt-5-nano"
+# gpt-4.1-mini is the v0.1 default: cheap, reliably follows tool schemas
+# and Pydantic structured outputs, plenty of context for the 10-turn loop.
+# Smaller models (gpt-5-nano in particular) misfire on required tool args
+# often enough that the workflow wedges on retry; override via OPENAI_MODEL
+# if you want to measure that as a regression rather than hit it by default.
+DEFAULT_MODEL = "gpt-4.1-mini"
 
 SEND_INVOICE_INSTRUCTIONS = """\
 You are a billing agent that drafts invoices for a B2B SaaS company.

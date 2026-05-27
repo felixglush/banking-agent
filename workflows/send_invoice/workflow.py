@@ -28,6 +28,7 @@ from temporalio import workflow
 from temporalio.common import RetryPolicy
 from temporalio.contrib.openai_agents.workflow import stateful_mcp_server
 from temporalio.exceptions import ApplicationError
+from temporalio.workflow import ActivityConfig
 
 with workflow.unsafe.imports_passed_through():
     from agents import Runner
@@ -89,7 +90,18 @@ class SendInvoiceWorkflow:
         # The plugin's stateful MCP wrapper keeps one MCP subprocess warm
         # for the whole agent loop; without it every tool call would spawn
         # a fresh subprocess.
-        async with stateful_mcp_server("bank") as bank:
+        #
+        # MCP tool-call activities use a 1-attempt retry policy: tool
+        # errors are almost always "model called this wrong" and retrying
+        # the same arguments cannot succeed. Fail fast so the agent sees
+        # the error and self-corrects on the next turn.
+        async with stateful_mcp_server(
+            "bank",
+            config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=RetryPolicy(maximum_attempts=1),
+            ),
+        ) as bank:
             agent = build_main_agent(bank)
             result = await Runner.run(agent, input=req.user_message, max_turns=10)
 

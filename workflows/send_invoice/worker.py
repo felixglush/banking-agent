@@ -104,7 +104,15 @@ def _mcp_factory(_arg: object | None) -> MCPServer:
 
 
 def build_plugin() -> OpenAIAgentsPlugin:
-    """Plugin shared between production worker and the test harness."""
+    """Plugin shared between production worker and the test harness.
+
+    The MCP call_tool activity's retry policy is set inside the workflow
+    (``stateful_mcp_server(..., config=ActivityConfig(retry_policy=...))``)
+    because tool-call errors are almost always "the model called this
+    wrong" — non-retryable. The plugin itself only configures the LLM
+    activity's timeout; default LLM retries are fine for transient
+    upstream failures.
+    """
     return OpenAIAgentsPlugin(
         model_params=ModelActivityParameters(
             start_to_close_timeout=timedelta(seconds=120),
