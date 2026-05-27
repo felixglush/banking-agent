@@ -13,6 +13,21 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+
+class BoundedList[T](BaseModel):
+    """List result capped at a server-side maximum.
+
+    ``truncated=True`` means the underlying query matched more rows than
+    the cap and the caller should narrow its filters; the MCP server does
+    not paginate the missing rows — see ``mcp_bank/README.md``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    items: list[T]
+    truncated: bool
+
+
 KycStatus = Literal["verified", "pending", "restricted", "rejected"]
 InvoiceStatus = Literal["draft", "sent", "paid", "overdue", "disputed"]
 LineItemSourceType = Literal["contract", "rate_card", "time_tracking", "user_specified"]

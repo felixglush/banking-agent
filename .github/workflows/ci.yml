@@ -8,6 +8,21 @@ jobs:
   ci:
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: postgres:18.4-alpine
+        env:
+          POSTGRES_USER: compass
+          POSTGRES_PASSWORD: compass
+          POSTGRES_DB: compass
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U compass -d compass"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+
     steps:
       - uses: actions/checkout@v6.0.2
 
@@ -36,5 +51,9 @@ jobs:
 
       - name: Pytest
         # pytest exits with code 5 when no tests are collected.
-        # We treat that as success here; Stage 2+ will land real tests.
+        # We treat that as success here as a belt-and-braces for any
+        # future subdir with no tests yet.
+        env:
+          COMPASS_TEST_PG_DSN: postgresql://compass:compass@localhost:5432/compass_test
+          COMPASS_TEST_ADMIN_DSN: postgresql://compass:compass@localhost:5432/compass
         run: uv run pytest || [ $? -eq 5 ]
