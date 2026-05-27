@@ -1,10 +1,17 @@
-"""Workflow-level tests for ``SendInvoiceWorkflow``.
+"""Workflow-level orchestration tests for ``SendInvoiceWorkflow``.
 
 These tests do NOT exercise OpenAI, MCP, or any real reasoning. The
 agent is wired with a ``TestModel`` whose response is a canned JSON
 ``InvoiceProposal``. The point is to lock in the orchestration: did
 each activity fire, in the right order, with the right idempotency
 guarantees, ending in the right ``WorkflowResult``.
+
+Stage 5: the in-process ``TestModel`` never calls MCP tools, so
+``resolved_entities`` would be empty and the policy gate would block
+every run. Real policy behavior is covered by
+``test_workflow_policy.py``; these orchestration tests bypass the
+policy engine via ``COMPASS_POLICY_DISABLE=1`` to keep the focus on
+activity ordering / signals / timeout.
 """
 
 import json
@@ -26,6 +33,13 @@ from workflows.send_invoice.types import (
     WorkflowResult,
 )
 from workflows.send_invoice.workflow import SendInvoiceWorkflow
+
+
+@pytest.fixture(autouse=True)
+def _disable_policy_for_orchestration_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stage-5 policy engine blocks runs where the agent didn't query MCP.
+    These tests skip the policy gate to keep their focus on orchestration."""
+    monkeypatch.setenv("COMPASS_POLICY_DISABLE", "1")
 
 
 def _proposal_response(proposal: dict[str, Any] | None = None) -> TestModel:
@@ -70,16 +84,12 @@ async def test_happy_path_writes_invoice_and_full_audit(
 
     rows = await _fetch_audit(workflow_id)
     kinds = [r["event_kind"] for r in rows]
-    assert kinds == ["proposal", "approval_signal", "executed"]
-    assert [r["phase"] for r in rows] == [
-        "pre_action_proposal",
-        "pre_execute",
-        "audit_validation",
-    ]
-    # actor captured for human-driven events, not for the policy "proposal" row
-    assert rows[0]["actor"] is None
+    # With COMPASS_POLICY_DISABLE=1 the policy activity emits no audit
+    # rows; only approval_signal + the terminal executed row remain.
+    assert kinds == ["approval_signal", "executed"]
+    assert [r["phase"] for r in rows] == ["pre_execute", "audit_validation"]
+    assert rows[0]["actor"] == {"user_id": "alice", "auth_method": "demo_cli"}
     assert rows[1]["actor"] == {"user_id": "alice", "auth_method": "demo_cli"}
-    assert rows[2]["actor"] == {"user_id": "alice", "auth_method": "demo_cli"}
 
     invoice = await _fetch_invoice(workflow_id)
     assert invoice is not None
@@ -111,7 +121,7 @@ async def test_declined_records_audit_and_skips_send(
     assert result.invoice_id is None
     rows = await _fetch_audit(workflow_id)
     kinds = [r["event_kind"] for r in rows]
-    assert kinds == ["proposal", "approval_signal", "declined"]
+    assert kinds == ["approval_signal", "declined"]
     # never reached execute_send → no row in invoices
     invoice = await _fetch_invoice(workflow_id)
     assert invoice is None
@@ -137,8 +147,8 @@ async def test_approval_timeout_records_audit_and_skips_send(
     assert result.outcome == "timeout"
     assert result.invoice_id is None
     rows = await _fetch_audit(workflow_id)
-    assert [r["event_kind"] for r in rows] == ["proposal", "declined"]
-    assert rows[1]["payload"] == {"reason": "approval_timeout"}
+    assert [r["event_kind"] for r in rows] == ["declined"]
+    assert rows[0]["payload"] == {"reason": "approval_timeout"}
 
 
 async def test_duplicate_signal_is_logged_and_ignored(

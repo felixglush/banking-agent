@@ -1,22 +1,22 @@
 """Side-effect activities for the SendInvoice workflow.
 
-Three activities, all idempotent under Temporal retries:
+Stage 5:
+* ``evaluate_policy`` runs compass.policy.evaluate at the requested
+  phase, writes a policy_snapshots row, and maps exceptions to
+  Temporal's retry semantics. Switches on phase (pre_action_proposal,
+  pre_execute, audit_validation) — one activity, runtime arg.
+* ``execute_send`` unchanged from Stage 4.
+* ``audit_log`` grows ``is_terminal_event``: when True, runs
+  evaluate_audit_validation against the candidate row before insert,
+  and writes rule_fired events + the original row in one transaction.
 
-* ``evaluate_policy`` — Stage 4 stub that writes a ``proposal`` audit row
-  and returns permit. Stage 5 replaces the body with ``compass.policy``.
-* ``execute_send`` — writes a row into ``invoices`` + ``invoice_line_items``,
-  keyed on ``idempotency_key`` (the workflow run id). ``ON CONFLICT DO
-  NOTHING`` makes activity retries safe.
-* ``audit_log`` — appends to ``audit_log``. ``UNIQUE (workflow_run_id,
-  sequence_no)`` + ``ON CONFLICT DO NOTHING`` makes retries safe.
-
-Connection lifetime: one ``psycopg.AsyncConnection`` per activity call.
-At Stage 4 single-workflow demo volume, a pool buys nothing and a pool
-that outlives the worker process is one more shutdown hook to forget.
+All three remain idempotent under Temporal retries — see
+docs/superpowers/specs/2026-05-27-stage-5-policy-engine-design.md
+§Activity failure semantics.
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import psycopg
@@ -24,27 +24,28 @@ from psycopg.types.json import Jsonb
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
+from compass.policy import (
+    Phase,
+    PolicyEngineError,
+    evaluate,
+    write_policy_snapshot,
+)
+from compass.policy.audit_sink import AuditLogSink, SequenceAllocator
+from policies.send_invoice import RULES
+from workflows.send_invoice.context import hash_proposal
 from workflows.send_invoice.types import (
     ApprovalDecision,
     InvoiceProposal,
-    PolicyDecision,
+    PolicyDecisionPayload,
 )
-
-# Used in every audit row at Stage 4 — Stage 5 generates a real hash from
-# the loaded RULES module. Constant so audit log queries can filter
-# "Stage 4 runs" out by hash if they want.
-_STAGE_4_POLICY_HASH = "stage-4-stub"
 
 
 def _dsn() -> str:
-    """DSN for runtime-owned tables (``audit_log``, ``invoices``, ...).
-
-    Reused from ``COMPASS_PG_DSN`` so the worker and the MCP subprocess
-    point at the same Postgres instance.
-    """
     dsn = os.environ.get("COMPASS_PG_DSN")
     if not dsn:
-        raise RuntimeError("workflows.send_invoice.activities: COMPASS_PG_DSN must be set.")
+        raise RuntimeError(
+            "workflows.send_invoice.activities: COMPASS_PG_DSN must be set."
+        )
     return dsn
 
 
@@ -55,9 +56,6 @@ def _dsn() -> str:
 
 @dataclass
 class AuditEvent:
-    """Inputs to ``audit_log``. A dataclass (not pydantic) because Temporal
-    serializes dataclasses cleanly and we want a stable activity signature."""
-
     workflow_run_id: str
     sequence_no: int
     phase: str
@@ -66,96 +64,222 @@ class AuditEvent:
     decision: str | None = None
     rule_id: str | None = None
     actor: dict[str, Any] | None = None
+    # New at Stage 5. When True, evaluate_audit_validation runs against
+    # this event's payload before the row is written. Used for the
+    # final terminal audit row of the workflow.
+    is_terminal_event: bool = False
+    # Workflow's current policy_hash (captured at pre_action_proposal).
+    # Required when is_terminal_event=True so the audit_validation
+    # rules can check log_policy_version.
+    policy_hash_for_validation: str | None = None
+    # Tool calls + reasoning are passed through for the same reason.
+    tool_calls_for_validation: list[dict[str, Any]] = field(default_factory=list)
+    reasoning_text_for_validation: str = ""
 
 
-async def _write_audit_row(event: AuditEvent) -> None:
-    """The actual DB write. Pulled out so ``evaluate_policy`` can append
-    a ``proposal`` row without re-entering Temporal as a nested activity.
-    """
+async def _write_audit_row(
+    cur: psycopg.AsyncCursor, event: AuditEvent, *, policy_hash: str | None,
+) -> None:
+    """Single-row INSERT into audit_log; idempotent via ON CONFLICT."""
     actor_param = Jsonb(event.actor) if event.actor is not None else None
-    async with await psycopg.AsyncConnection.connect(_dsn()) as conn, conn.cursor() as cur:
-        await cur.execute(
-            """
-            INSERT INTO audit_log (
-                workflow_run_id, sequence_no, phase, event_kind, rule_id,
-                policy_hash, decision, actor, payload
-            )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-            ON CONFLICT (workflow_run_id, sequence_no) DO NOTHING
-            """,
-            (
-                event.workflow_run_id,
-                event.sequence_no,
-                event.phase,
-                event.event_kind,
-                event.rule_id,
-                _STAGE_4_POLICY_HASH,
-                event.decision,
-                actor_param,
-                Jsonb(event.payload),
-            ),
+    await cur.execute(
+        """
+        INSERT INTO audit_log (
+            workflow_run_id, sequence_no, phase, event_kind, rule_id,
+            policy_hash, decision, actor, payload
         )
-        await conn.commit()
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        ON CONFLICT (workflow_run_id, sequence_no) DO NOTHING
+        """,
+        (
+            event.workflow_run_id,
+            event.sequence_no,
+            event.phase,
+            event.event_kind,
+            event.rule_id,
+            policy_hash or "unknown",
+            event.decision,
+            actor_param,
+            Jsonb(event.payload),
+        ),
+    )
 
 
 @activity.defn
 async def audit_log(event: AuditEvent) -> None:
-    """Append one row to ``audit_log``.
+    """Append one (or more) rows to audit_log.
 
-    Idempotent on ``(workflow_run_id, sequence_no)`` — retries collide on
-    the UNIQUE constraint and ``ON CONFLICT DO NOTHING`` drops the second
-    write. ``event_kind`` is intentionally not part of the key (build-plan
-    §Stage 4 interop rule 3) so multiple rules in one phase don't
-    collide.
+    Non-terminal events: one row, simple insert.
+
+    Terminal events: run evaluate_audit_validation against the
+    candidate row in-memory; emit rule_fired events through an
+    AuditLogSink that allocates sequence numbers starting at
+    event.sequence_no + 1; then insert the original terminal row at
+    event.sequence_no. All in one transaction — recursion-safe.
+
+    No raise on audit_validation BLOCK — at Stage 5 those rules fire
+    only on workflow defects, and we write the row regardless so the
+    audit trail isn't lost. The rule_fired row stays in the log for
+    later analysis.
     """
-    await _write_audit_row(event)
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+        try:
+            async with conn.cursor() as cur:
+                if event.is_terminal_event and os.environ.get(
+                    "COMPASS_POLICY_DISABLE"
+                ) != "1":
+                    # Run audit_validation rules against the candidate.
+                    candidate = {
+                        "phase": event.phase,
+                        "event_kind": event.event_kind,
+                        "payload": event.payload,
+                    }
+                    ctx = {
+                        "audit_entry_candidate": candidate,
+                        "policy_hash": event.policy_hash_for_validation,
+                        "tool_calls": event.tool_calls_for_validation,
+                        "reasoning_text": event.reasoning_text_for_validation,
+                    }
+                    allocator = SequenceAllocator(event.sequence_no + 1)
+                    sink = AuditLogSink(
+                        conn,
+                        event.workflow_run_id,
+                        allocator,
+                        event.policy_hash_for_validation or "unknown",
+                    )
+                    try:
+                        await evaluate(
+                            RULES, Phase.audit_validation, ctx, sink=sink,
+                        )
+                    except PolicyEngineError as e:
+                        raise ApplicationError(
+                            str(e),
+                            type="PolicyEngineError",
+                            non_retryable=not e.retryable,
+                        ) from e
+                    # Terminal row written AFTER the rule_fired events
+                    # so its sequence_no slot is reserved. We use the
+                    # passed sequence_no as-is.
+                    await _write_audit_row(
+                        cur, event, policy_hash=event.policy_hash_for_validation,
+                    )
+                else:
+                    # Non-terminal events, or terminal events when policy
+                    # is bypassed via the eval ablation hatch.
+                    await _write_audit_row(
+                        cur, event, policy_hash=event.policy_hash_for_validation,
+                    )
+            await conn.commit()
+        except psycopg.Error as e:
+            raise ApplicationError(
+                str(e), type="PolicyInfraError", non_retryable=False,
+            ) from e
 
 
 # ---------------------------------------------------------------------
-# evaluate_policy (Stage 4 stub)
+# evaluate_policy
 # ---------------------------------------------------------------------
 
 
 @dataclass
 class EvaluatePolicyInput:
     workflow_run_id: str
-    sequence_no: int
-    proposal: dict[str, Any]
+    starting_sequence_no: int
+    phase: str  # Phase enum value as string (Temporal dataclass-friendly)
+    context: dict[str, Any]
 
 
 @activity.defn
-async def evaluate_policy(args: EvaluatePolicyInput) -> PolicyDecision:
-    """Stage 4 stub: write a ``proposal`` audit row and permit.
+async def evaluate_policy(args: EvaluatePolicyInput) -> PolicyDecisionPayload:
+    """Run evaluate() at the requested phase; persist snapshot + audit.
 
-    Stage 5 fills in the real engine. The signature is shaped so the
-    Stage-5 swap is purely additive — same input, same output, same retry
-    contract. ``PolicyDecisionError`` (block / escalate) is raised as
-    ``ApplicationError(non_retryable=True)``; ``PolicyEngineError`` /
-    ``PolicyInfraError`` would be raised as retryable. Neither path is
-    exercised at Stage 4.
+    See spec §Workflow integration — evaluate_policy.
     """
-    try:
-        await _write_audit_row(
-            AuditEvent(
-                workflow_run_id=args.workflow_run_id,
-                sequence_no=args.sequence_no,
-                phase="pre_action_proposal",
-                event_kind="proposal",
-                decision="permit",
-                payload={"proposal": args.proposal},
-            )
+    phase = Phase(args.phase)
+
+    # ---- eval-only ablation hatch ----------------------------------
+    # Stage-7+ policy-ablation eval (build-plan §Stage 7) flips this
+    # env var to measure the marginal value of the policy engine. When
+    # set, the activity short-circuits to permit=True with a sentinel
+    # policy_hash so audit_log queries can identify ablation runs.
+    # Zero impact on production (env var is never set).
+    if os.environ.get("COMPASS_POLICY_DISABLE") == "1":
+        activity.logger.warning(
+            "COMPASS_POLICY_DISABLE=1 — bypassing policy gate at phase=%s "
+            "(eval-only ablation; should never be set in production)",
+            phase.value,
         )
-    except Exception as e:  # noqa: BLE001
+        return PolicyDecisionPayload(
+            permit=True,
+            policy_hash="disabled-for-eval",
+            rule_ids_fired=[],
+            escalations=[],
+            next_sequence_no=args.starting_sequence_no,
+        )
+
+    try:
+        async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
+            policy_hash = await write_policy_snapshot(conn, "send_invoice", RULES)
+            allocator = SequenceAllocator(args.starting_sequence_no)
+            sink = AuditLogSink(
+                conn, args.workflow_run_id, allocator, policy_hash,
+            )
+
+            # The drift-detection primitives compare hashes pulled from
+            # the context dict. The workflow puts proposal_hash_at_proposal
+            # in there; we add current_proposal_hash (recomputed here
+            # from the proposal) and current_policy_hash (the hash we
+            # just computed for the snapshot).
+            ctx = dict(args.context)
+            if "proposal" in ctx and ctx.get("proposal") is not None:
+                ctx["current_proposal_hash"] = hash_proposal(ctx["proposal"])
+            ctx["current_policy_hash"] = policy_hash
+
+            try:
+                decision = await evaluate(RULES, phase, ctx, sink=sink)
+            except PolicyEngineError as e:
+                raise ApplicationError(
+                    str(e),
+                    type="PolicyEngineError",
+                    non_retryable=not e.retryable,
+                ) from e
+
+            await conn.commit()
+    except psycopg.Error as e:
         raise ApplicationError(
-            f"evaluate_policy: audit write failed: {e}",
-            type="PolicyInfraError",
-            non_retryable=False,
+            str(e), type="PolicyInfraError", non_retryable=False,
         ) from e
-    return PolicyDecision(permit=True, rule_ids_fired=[])
+
+    if not decision.permit:
+        raise ApplicationError(
+            "policy blocked",
+            {
+                "phase": phase.value,
+                "rule_ids_fired": list(decision.rule_ids_fired),
+                "violations": [
+                    {"rule_id": v.rule_id, "message": v.message,
+                     "evidence": v.evidence}
+                    for v in decision.violations
+                ],
+            },
+            type="PolicyDecisionError",
+            non_retryable=True,
+        )
+
+    return PolicyDecisionPayload(
+        permit=True,
+        policy_hash=policy_hash,
+        rule_ids_fired=list(decision.rule_ids_fired),
+        escalations=[
+            {"rule_id": v.rule_id, "message": v.message, "evidence": v.evidence}
+            for v in decision.escalations
+        ],
+        next_sequence_no=allocator.peek(),
+    )
 
 
 # ---------------------------------------------------------------------
-# execute_send
+# execute_send  (unchanged from Stage 4)
 # ---------------------------------------------------------------------
 
 
@@ -168,14 +292,7 @@ class ExecuteSendInput:
 
 @activity.defn
 async def execute_send(args: ExecuteSendInput) -> str:
-    """Persist the approved invoice. Returns the invoice id.
-
-    Idempotency: the invoice id is derived from ``workflow_run_id`` so two
-    retries of this activity produce the same primary key, and ``ON
-    CONFLICT DO NOTHING`` on every insert makes the second pass a no-op.
-    The "send" verb is a no-op log line at v0.1 — no email/PDF; the
-    persisted row is the artifact downstream evals check.
-    """
+    """Persist the approved invoice. Returns the invoice id."""
     proposal = InvoiceProposal.model_validate(args.proposal)
     approval = ApprovalDecision.model_validate(args.approval)
     invoice_id = f"inv-{args.workflow_run_id}"

@@ -70,16 +70,21 @@ class ApprovalDecision(BaseModel):
     notes: str | None = None
 
 
-class PolicyDecision(BaseModel):
-    """Stub return from ``evaluate_policy`` at Stage 4.
+class PolicyDecisionPayload(BaseModel):
+    """Activity return from ``evaluate_policy`` at Stage 5.
 
-    Stage 5 replaces this with the engine in ``compass.policy``.
+    Replaces the Stage-4 ``PolicyDecision`` stub. The compass
+    ``Decision`` type lives in compass.policy.types; this is the
+    activity-boundary serialization the workflow consumes.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     permit: bool
+    policy_hash: str
     rule_ids_fired: list[str] = []
+    escalations: list[dict] = []
+    next_sequence_no: int
 
 
 WorkflowOutcome = Literal["sent", "policy_rejected", "declined", "timeout"]
