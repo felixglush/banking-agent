@@ -15,8 +15,6 @@ all template-driven. Counterfactual perturbations use an LLM, but
 that's Stage 9, not here.
 """
 
-from __future__ import annotations
-
 import argparse
 import json
 import math

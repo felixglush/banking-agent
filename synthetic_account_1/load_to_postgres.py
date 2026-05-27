@@ -1,8 +1,9 @@
 """Idempotent bulk loader: TRUNCATE + reload bank-data tables from JSONL.
 
 Bank-data tables only — ``audit_log``, ``policy_snapshots``, and
-``eval_runs`` are runtime-owned and never touched by this loader. Per build-plan §Validation Criteria 1 the criterion
-"identical DB state on re-run" applies to bank-data tables only.
+``eval_runs`` are runtime-owned and never touched by this loader. Per
+build-plan §Validation Criteria 1 the criterion "identical DB state on
+re-run" applies to bank-data tables only.
 
 DSN is read from ``COMPASS_PG_DSN``. The schema DDL at ``db/schema.sql``
 is always executed before TRUNCATE so the loader is usable against a
@@ -16,8 +17,6 @@ Run as a module::
 
     COMPASS_PG_DSN=postgres://... uv run python -m synthetic_account_1.load_to_postgres
 """
-
-from __future__ import annotations
 
 import argparse
 import json

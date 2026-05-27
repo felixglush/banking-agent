@@ -11,16 +11,22 @@ micros (``value * 1e6``) so the JSONL round-trips through Postgres
 ``BIGINT`` columns without floating-point drift.
 """
 
-from __future__ import annotations
-
 from datetime import date, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ---------------------------------------------------------------------
 # Contract billing structure (pre-derived; see build-plan line 118).
 # ---------------------------------------------------------------------
+
+
+class Milestone(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1)
+    amount_cents: int = Field(gt=0)
+    due_date: date
 
 
 class FlatFeeSOW(BaseModel):
@@ -33,7 +39,7 @@ class FlatFeeSOW(BaseModel):
     milestones: list[Milestone] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _milestones_sum_to_total(self) -> FlatFeeSOW:
+    def _milestones_sum_to_total(self) -> Self:
         total = sum(m.amount_cents for m in self.milestones)
         if total != self.total_amount_cents:
             raise ValueError(
@@ -41,14 +47,6 @@ class FlatFeeSOW(BaseModel):
                 f"expected total_amount_cents={self.total_amount_cents}"
             )
         return self
-
-
-class Milestone(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: str = Field(min_length=1)
-    amount_cents: int = Field(gt=0)
-    due_date: date
 
 
 class MonthlyRetainer(BaseModel):
@@ -81,7 +79,7 @@ class TimeAndMaterials(BaseModel):
     list_rates_apply: bool = True
 
     @model_validator(mode="after")
-    def _has_some_structure(self) -> TimeAndMaterials:
+    def _has_some_structure(self) -> Self:
         if not self.rate_overrides and self.monthly_hour_cap is None and self.list_rates_apply:
             # A pure-list-rate T&M arrangement is fine — that's a contract
             # that simply says "we'll do T&M against your published list
@@ -114,14 +112,10 @@ class Contract(BaseModel):
     source_doc_ref: str | None = None
 
     @model_validator(mode="after")
-    def _expires_after_effective(self) -> Contract:
+    def _expires_after_effective(self) -> Self:
         if self.expires_at is not None and self.expires_at <= self.effective_from:
             raise ValueError("expires_at must be strictly after effective_from")
         return self
-
-
-# Resolve forward references.
-FlatFeeSOW.model_rebuild()
 
 
 # ---------------------------------------------------------------------

@@ -3,7 +3,8 @@ name = "compass"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "psycopg[binary]==3.3.4",
+    "fastmcp==3.3.1",
+    "psycopg[binary,pool]==3.3.4",
     "pydantic==2.13.4",
     "pyyaml==6.0.3",
 ]
@@ -18,6 +19,7 @@ dev = [
     "ruff==0.15.14",
     "pyright==1.1.409",
     "pytest==9.0.3",
+    "pytest-asyncio==1.4.0",
 ]
 
 [tool.ruff]
@@ -56,3 +58,9 @@ exclude = ["**/.venv", "**/__pycache__", "**/generated"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
+# Session loop for both fixtures and tests so a session-scoped pool's
+# background tasks survive across tests; mismatched scopes manifest as
+# PoolTimeout on the first connection request.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
