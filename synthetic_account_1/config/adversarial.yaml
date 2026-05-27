@@ -1,0 +1,36 @@
+# Ambiguity-rich subset. These are inserted *into* the main customer
+# pool, not generated separately — the property the generator must
+# satisfy is "at least one pair of customers exists whose names differ
+# by only a suffix / spacing / abbreviation."
+#
+# See build-plan §Eval Framework §3 ("name perturbations are NOT a
+# perturbation class") — these similar-name pairs are tested by the
+# functional accuracy suite, not by counterfactual perturbation.
+
+similar_name_pairs:
+  - ["Acme Corp", "Acme Corporation"]
+  - ["Stark Industries", "Stark Industrial"]
+  - ["Wayne Enterprises", "Wayne Enterprise"]
+  - ["Globex", "Globex Inc"]
+
+# Customers whose KYC status forces them into the `restricted` bucket
+# regardless of cohort sampling.
+restricted_customer_count: 3
+
+# Customers with multiple billing contacts (modeled as multiple email
+# addresses pipe-separated in the `email` field — the MCP server later
+# splits on `|`).
+multi_billing_contact_count: 5
+
+# Edge-case rate-card entries inserted on top of the base list.
+edge_case_rate_entries:
+  - service: "Legacy Implementation"
+    role: "Solutions Architect (Pre-2023)"
+    unit: "hour"
+    list_amount_cents: 30_000   # below current list rate
+    effective_from: "2022-01-01"
+    effective_to: "2024-05-31"
+  - service: "Pilot Support"
+    role: "Pilot Engineer"
+    unit: "hour"
+    list_amount_cents: 50_000   # unusually high

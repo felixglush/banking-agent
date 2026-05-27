@@ -1,0 +1,9 @@
+{"currency":"USD","effective_from":"2024-06-01","effective_to":null,"id":"rc_base_001","list_amount_cents":35000,"role":"Solutions Architect","service":"Implementation","unit":"hour"}
+{"currency":"USD","effective_from":"2024-06-01","effective_to":null,"id":"rc_base_002","list_amount_cents":25000,"role":"Solutions Engineer","service":"Implementation","unit":"hour"}
+{"currency":"USD","effective_from":"2024-06-01","effective_to":null,"id":"rc_base_003","list_amount_cents":18000,"role":"Onboarding Specialist","service":"Implementation","unit":"hour"}
+{"currency":"USD","effective_from":"2024-06-01","effective_to":null,"id":"rc_base_004","list_amount_cents":22000,"role":"Tier 2 Engineer","service":"Support","unit":"hour"}
+{"currency":"USD","effective_from":"2024-06-01","effective_to":null,"id":"rc_base_005","list_amount_cents":20000,"role":"Trainer","service":"Training","unit":"hour"}
+{"currency":"USD","effective_from":"2024-06-01","effective_to":null,"id":"rc_base_006","list_amount_cents":1500000,"role":null,"service":"Onboarding Package","unit":"flat"}
+{"currency":"USD","effective_from":"2024-06-01","effective_to":null,"id":"rc_base_007","list_amount_cents":500000,"role":null,"service":"Premium Support","unit":"month"}
+{"currency":"USD","effective_from":"2022-01-01","effective_to":"2024-05-31","id":"rc_edge_001","list_amount_cents":30000,"role":"Solutions Architect (Pre-2023)","service":"Legacy Implementation","unit":"hour"}
+{"currency":"USD","effective_from":"2024-06-01","effective_to":null,"id":"rc_edge_002","list_amount_cents":50000,"role":"Pilot Engineer","service":"Pilot Support","unit":"hour"}

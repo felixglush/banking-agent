@@ -1,0 +1,35 @@
+# Synthetic Account 1 — company profile.
+# This file is derived from synthetic_account_1/README.md; that README is
+# the human-readable source of truth.
+
+name: "Bramble AI"
+description: "Series A AI-native B2B SaaS startup."
+domain: "bramble-ai.example"
+employee_count: 22
+arr_dollars: 4_000_000
+customer_count_target: 120
+acv_dollars_mean: 33_000
+months_of_history: 24
+# All timestamps are anchored to this end date so the dataset is
+# deterministic regardless of when simulate.py is invoked.
+as_of_date: "2026-05-25"
+default_seed: 20260525
+default_currency: "USD"
+
+accounts:
+  - id: "acct_operating_001"
+    name: "Bramble AI Operating"
+    type: "operating"
+    initial_balance_cents: 50_000_000   # $500k
+  - id: "acct_payroll_001"
+    name: "Bramble AI Payroll"
+    type: "payroll"
+    initial_balance_cents: 20_000_000   # $200k
+  - id: "acct_reserve_001"
+    name: "Bramble AI Reserve"
+    type: "reserve"
+    initial_balance_cents: 100_000_000  # $1M
+  - id: "acct_card_001"
+    name: "Bramble AI Card"
+    type: "credit_card"
+    initial_balance_cents: -2_500_000   # $25k debt

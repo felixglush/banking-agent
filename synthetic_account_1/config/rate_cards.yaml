@@ -1,0 +1,36 @@
+# Bramble AI's published list rates. Used directly for `source_type:
+# rate_card` invoices; can be overridden per-contract via RateOverride.
+# `unit` of "flat" is for fixed-fee deliverables (e.g., onboarding).
+
+effective_from: "2024-06-01"
+currency: "USD"
+
+entries:
+  - service: "Implementation"
+    role: "Solutions Architect"
+    unit: "hour"
+    list_amount_cents: 35_000     # $350/hr
+  - service: "Implementation"
+    role: "Solutions Engineer"
+    unit: "hour"
+    list_amount_cents: 25_000     # $250/hr
+  - service: "Implementation"
+    role: "Onboarding Specialist"
+    unit: "hour"
+    list_amount_cents: 18_000     # $180/hr
+  - service: "Support"
+    role: "Tier 2 Engineer"
+    unit: "hour"
+    list_amount_cents: 22_000     # $220/hr
+  - service: "Training"
+    role: "Trainer"
+    unit: "hour"
+    list_amount_cents: 20_000     # $200/hr
+  - service: "Onboarding Package"
+    role: null
+    unit: "flat"
+    list_amount_cents: 1_500_000  # $15k
+  - service: "Premium Support"
+    role: null
+    unit: "month"
+    list_amount_cents: 500_000    # $5k/mo

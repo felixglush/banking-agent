@@ -1,0 +1,58 @@
+[project]
+name = "compass"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "psycopg[binary]==3.3.4",
+    "pydantic==2.13.4",
+    "pyyaml==6.0.3",
+]
+
+[tool.uv]
+# Not a pip-installable package yet — compass/ is created in Stage 2+.
+# This avoids requiring a build-system table while keeping `uv sync` working.
+package = false
+
+[dependency-groups]
+dev = [
+    "ruff==0.15.14",
+    "pyright==1.1.409",
+    "pytest==9.0.3",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PL"]
+# Procedural code (simulate.py, tests with numeric assertions) is the
+# dominant target at v0.1. The "magic value" and "too many ..." family
+# fights configuration-shaped code without paying for itself; the rest
+# of PL stays on.
+ignore = [
+    "PLR2004",  # magic-value comparisons (constants would just add indirection)
+    "PLR0911",  # too many return statements
+    "PLR0912",  # too many branches
+    "PLR0913",  # too many arguments
+    "PLR0915",  # too many statements
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Loop-variable rebinding is the idiomatic way to do `for line in f: line = line.strip()`
+"synthetic_account_1/load_to_postgres.py" = ["PLW2901"]
+"synthetic_account_1/verify.py" = ["PLW2901"]
+"synthetic_account_1/simulate.py" = ["PLR0914", "PLR0917"]
+
+[tool.ruff.format]
+# Black-compatible defaults.
+quote-style = "double"
+indent-style = "space"
+
+[tool.pyright]
+pythonVersion = "3.12"
+typeCheckingMode = "strict"
+exclude = ["**/.venv", "**/__pycache__", "**/generated"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

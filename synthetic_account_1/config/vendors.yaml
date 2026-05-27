@@ -1,0 +1,55 @@
+# Recurring vendor expenses. Each vendor draws from amount_range_cents
+# uniformly per occurrence; cadence is one of: monthly, semi_monthly,
+# weekly. Categories match what bank MCP returns in get_transaction.
+
+vendors:
+  - name: "Gusto"
+    category: "payroll"
+    cadence: "semi_monthly"
+    amount_range_cents: [12_000_000, 14_000_000]
+    account: "acct_payroll_001"
+  - name: "AWS"
+    category: "cloud_infrastructure"
+    cadence: "monthly"
+    amount_range_cents: [800_000, 1_400_000]
+    account: "acct_card_001"
+  - name: "Datadog"
+    category: "saas_tooling"
+    cadence: "monthly"
+    amount_range_cents: [120_000, 180_000]
+    account: "acct_card_001"
+  - name: "Notion"
+    category: "saas_tooling"
+    cadence: "monthly"
+    amount_range_cents: [35_000, 50_000]
+    account: "acct_card_001"
+  - name: "Linear"
+    category: "saas_tooling"
+    cadence: "monthly"
+    amount_range_cents: [40_000, 60_000]
+    account: "acct_card_001"
+  - name: "Slack"
+    category: "saas_tooling"
+    cadence: "monthly"
+    amount_range_cents: [60_000, 80_000]
+    account: "acct_card_001"
+  - name: "WeWork"
+    category: "office"
+    cadence: "monthly"
+    amount_range_cents: [800_000, 1_000_000]
+    account: "acct_operating_001"
+  - name: "Stripe Fees"
+    category: "payment_processing"
+    cadence: "monthly"
+    amount_range_cents: [200_000, 400_000]
+    account: "acct_operating_001"
+  - name: "DoorDash for Business"
+    category: "meals"
+    cadence: "weekly"
+    amount_range_cents: [80_000, 150_000]
+    account: "acct_card_001"
+  - name: "Brex Travel"
+    category: "travel"
+    cadence: "monthly"
+    amount_range_cents: [300_000, 1_200_000]
+    account: "acct_card_001"
