@@ -1,8 +1,7 @@
 """Idempotent bulk loader: TRUNCATE + reload bank-data tables from JSONL.
 
-Bank-data tables only — ``audit_log``, ``policy_snapshots``,
-``eval_runs``, ``eval_results`` are runtime-owned and never touched by
-this loader. Per build-plan §Validation Criteria 1 the criterion
+Bank-data tables only — ``audit_log``, ``policy_snapshots``, and
+``eval_runs`` are runtime-owned and never touched by this loader. Per build-plan §Validation Criteria 1 the criterion
 "identical DB state on re-run" applies to bank-data tables only.
 
 DSN is read from ``COMPASS_PG_DSN``. The schema DDL at ``db/schema.sql``

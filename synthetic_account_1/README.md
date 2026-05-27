@@ -82,5 +82,5 @@ seed produces byte-identical JSONL. Counterfactual perturbations DO use
 an LLM but that's Stage 9, applied on top of the frozen seed dataset.
 
 `load_to_postgres.py` touches bank-data tables only. `audit_log`,
-`policy_snapshots`, `eval_runs`, and `eval_results` are runtime-owned
-and survive across data reloads.
+`policy_snapshots`, and `eval_runs` are runtime-owned and survive
+across data reloads.

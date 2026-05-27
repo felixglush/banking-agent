@@ -24,7 +24,7 @@ def test_truncate_includes_all_bank_data_tables() -> None:
 
 def test_truncate_does_not_include_runtime_owned_tables() -> None:
     sql = build_truncate_sql()
-    for forbidden in ("audit_log", "policy_snapshots", "eval_runs", "eval_results"):
+    for forbidden in ("audit_log", "policy_snapshots", "eval_runs"):
         # `forbidden` could only appear if we erroneously added it; check
         # for the SQL identifier exactly.
         assert f" {forbidden}" not in sql, f"loader must not truncate {forbidden}"

@@ -9,7 +9,8 @@
 --     disputes) by TRUNCATE + bulk reload from generated JSONL.
 --   * compass.policy runtime (Stage 4/5) — appends to audit_log and
 --     upserts into policy_snapshots.
---   * compass.eval runtime (Stage 7) — writes eval_runs and eval_results.
+--   * compass.eval runtime (Stage 7) — writes eval_runs. Per-case
+--     scores live in Langfuse (Dataset Run scores), not Postgres.
 --
 -- Bank-data tables are reload-safe; runtime-owned tables are NOT touched
 -- by the loader and must survive across data reloads.
@@ -161,8 +162,12 @@ CREATE INDEX IF NOT EXISTS disputes_transaction_idx ON disputes (transaction_id)
 -- ---------------------------------------------------------------------
 -- Runtime-owned tables (NOT touched by load_to_postgres.py).
 -- audit_log + policy_snapshots are specified verbatim in
--- docs/build-plan.md §Database. eval_runs + eval_results are designed
--- here for Stage 7's harness.
+-- docs/build-plan.md §Database. eval_runs is designed here for Stage
+-- 7's harness — it holds harness-control state (holdout-run counter,
+-- mode, justification, git SHA) that needs SQL enforcement. Per-case
+-- pass/fail and details live in Langfuse Dataset Run scores; the
+-- trace_id Langfuse stores per item == workflow_run_id, so audit_log
+-- joins back via that column directly.
 -- ---------------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS audit_log (
@@ -204,19 +209,3 @@ CREATE TABLE IF NOT EXISTS eval_runs (
 );
 
 CREATE INDEX IF NOT EXISTS eval_runs_git_sha_idx ON eval_runs (git_sha);
-
--- eval_results: one row per (eval run, case, suite). workflow_run_id
--- links back to audit_log for trace-assertion suites.
-CREATE TABLE IF NOT EXISTS eval_results (
-    run_id          TEXT NOT NULL REFERENCES eval_runs (run_id),
-    case_id         TEXT NOT NULL,
-    suite           TEXT NOT NULL,
-    workflow_run_id TEXT,
-    passed          BOOLEAN NOT NULL,
-    details         JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (run_id, case_id, suite)
-);
-
-CREATE INDEX IF NOT EXISTS eval_results_workflow_run_idx
-    ON eval_results (workflow_run_id) WHERE workflow_run_id IS NOT NULL;
