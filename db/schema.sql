@@ -18,6 +18,11 @@
 -- No migration framework at v0.1: the local Postgres sidecar is
 -- regenerated from this file on each dev cycle. See docs/build-plan.md
 -- §Database.
+--
+-- Every bank-data table carries a ``tenant_id`` column with
+-- DEFAULT 'default'. The MCP server does not filter on it yet — see
+-- mcp_bank/README.md §Authorization (deferred). The column is present
+-- now so the WHERE-clause change is purely additive when authz lands.
 
 -- ---------------------------------------------------------------------
 -- Bank-data tables (populated by synthetic_account_1/load_to_postgres.py)
@@ -25,6 +30,7 @@
 
 CREATE TABLE IF NOT EXISTS customers (
     id                          TEXT PRIMARY KEY,
+    tenant_id                   TEXT NOT NULL DEFAULT 'default',
     name                        TEXT NOT NULL,
     email                       TEXT NOT NULL,
     address                     TEXT NOT NULL,
@@ -39,6 +45,7 @@ CREATE INDEX IF NOT EXISTS customers_name_idx ON customers (name);
 
 CREATE TABLE IF NOT EXISTS accounts (
     id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
     name            TEXT NOT NULL,
     type            TEXT NOT NULL
         CHECK (type IN ('operating', 'payroll', 'reserve', 'credit_card')),
@@ -49,6 +56,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 
 CREATE TABLE IF NOT EXISTS transactions (
     id               TEXT PRIMARY KEY,
+    tenant_id        TEXT NOT NULL DEFAULT 'default',
     account_id       TEXT NOT NULL REFERENCES accounts (id),
     amount_cents     BIGINT NOT NULL,
     direction        TEXT NOT NULL CHECK (direction IN ('debit', 'credit')),
@@ -64,6 +72,7 @@ CREATE INDEX IF NOT EXISTS transactions_posted_idx ON transactions (posted_at);
 
 CREATE TABLE IF NOT EXISTS rate_cards (
     id                  TEXT PRIMARY KEY,
+    tenant_id           TEXT NOT NULL DEFAULT 'default',
     service             TEXT NOT NULL,
     role                TEXT,
     unit                TEXT NOT NULL CHECK (unit IN ('hour', 'flat', 'month')),
@@ -75,6 +84,7 @@ CREATE TABLE IF NOT EXISTS rate_cards (
 
 CREATE TABLE IF NOT EXISTS projects (
     id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
     customer_id     TEXT NOT NULL REFERENCES customers (id),
     name            TEXT NOT NULL,
     status          TEXT NOT NULL CHECK (status IN ('active', 'completed', 'on_hold'))
@@ -82,6 +92,7 @@ CREATE TABLE IF NOT EXISTS projects (
 
 CREATE TABLE IF NOT EXISTS contracts (
     id                  TEXT PRIMARY KEY,
+    tenant_id           TEXT NOT NULL DEFAULT 'default',
     customer_id         TEXT NOT NULL REFERENCES customers (id),
     kind                TEXT NOT NULL CHECK (kind IN ('msa', 'sow', 'retainer')),
     effective_from      DATE NOT NULL,
@@ -98,6 +109,7 @@ CREATE INDEX IF NOT EXISTS contracts_customer_idx ON contracts (customer_id);
 
 CREATE TABLE IF NOT EXISTS invoices (
     id                   TEXT PRIMARY KEY,
+    tenant_id            TEXT NOT NULL DEFAULT 'default',
     customer_id          TEXT NOT NULL REFERENCES customers (id),
     issued_at            TIMESTAMPTZ NOT NULL,
     due_at               TIMESTAMPTZ NOT NULL,
@@ -117,6 +129,7 @@ CREATE INDEX IF NOT EXISTS invoices_status_idx ON invoices (status);
 
 CREATE TABLE IF NOT EXISTS invoice_line_items (
     id                  TEXT PRIMARY KEY,
+    tenant_id           TEXT NOT NULL DEFAULT 'default',
     invoice_id          TEXT NOT NULL REFERENCES invoices (id),
     line_no             INT  NOT NULL,
     description         TEXT NOT NULL,
@@ -134,6 +147,7 @@ CREATE INDEX IF NOT EXISTS invoice_line_items_invoice_idx ON invoice_line_items 
 
 CREATE TABLE IF NOT EXISTS time_entries (
     id              TEXT PRIMARY KEY,
+    tenant_id       TEXT NOT NULL DEFAULT 'default',
     customer_id     TEXT NOT NULL REFERENCES customers (id),
     project_id      TEXT NOT NULL REFERENCES projects (id),
     role            TEXT NOT NULL,
@@ -150,6 +164,7 @@ CREATE INDEX IF NOT EXISTS time_entries_project_idx ON time_entries (project_id)
 -- Table must exist so Stage 3's MCP server can issue SELECTs against it.
 CREATE TABLE IF NOT EXISTS disputes (
     id                  TEXT PRIMARY KEY,
+    tenant_id           TEXT NOT NULL DEFAULT 'default',
     transaction_id      TEXT NOT NULL REFERENCES transactions (id),
     opened_at           TIMESTAMPTZ NOT NULL,
     kind                TEXT NOT NULL,

@@ -79,6 +79,30 @@ accuracy against ground-truth tool invocations and (b) the tool-call
 history that `pre_action_proposal` policy rules consume
 (docs/build-plan.md §Stage 3, §Validation Criteria 2).
 
+## Authorization (deferred)
+
+The server has no caller-identity check or row-level scope filter — all
+nine tools return data for any caller. This is acceptable today because
+the MCP is single-tenant and trusted-caller: it runs over stdio,
+launched by the Temporal worker as a child process. Before exposing the
+server to multiple principals (or any networked transport), wire authz:
+
+1. Configure a FastMCP auth provider on the server, e.g.
+   `FastMCP("bank", auth=JWTVerifier(...))`. Choices live under
+   `fastmcp.server.auth.providers` (`JWTVerifier`, `AuthKitProvider`,
+   `GitHubProvider`, `MultiAuth`, …).
+2. In each handler, read
+   `fastmcp.server.dependencies.get_access_token()`, pull
+   `claims["tenant_id"]`, and add `AND tenant_id = %s` to the WHERE
+   clause. Raise on missing token / missing claim.
+3. Optional defense-in-depth: enable Postgres RLS keyed on a session
+   GUC set per connection checkout.
+
+The `tenant_id` column is already present on every bank-data table
+(`db/schema.sql`) with `DEFAULT 'default'`, so existing rows belong to
+the `'default'` tenant. The eventual handler change is additive — one
+extra clause in each WHERE — and does not require a data migration.
+
 ## Running
 
 ```bash
