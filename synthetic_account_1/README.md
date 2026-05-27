@@ -72,8 +72,11 @@ uv run python -m synthetic_account_1.simulate --seed 42
 # sanity-check
 uv run python -m synthetic_account_1.verify
 
-# bulk-load (once a Postgres is up; runs db/schema.sql first)
-COMPASS_PG_DSN=postgres://compass@localhost:5432/compass \
+# bulk-load (once a Postgres is up; runs db/schema.sql first).
+# Local DSN matches docker-compose.yml; override POSTGRES_PASSWORD via
+# env to use a different password, or replace the whole DSN to point at
+# a managed Postgres (Neon: ?sslmode=require).
+COMPASS_PG_DSN=postgres://compass:compass@localhost:5432/compass \
     uv run python -m synthetic_account_1.load_to_postgres
 ```
 

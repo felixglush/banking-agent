@@ -5,7 +5,9 @@ services:
     environment:
       POSTGRES_USER: compass
       POSTGRES_DB: compass
-      POSTGRES_HOST_AUTH_METHOD: trust
+      # SCRAM-SHA-256 by default in PG 18 — same shape as Neon/RDS auth so
+      # only the DSN (host, port, sslmode) changes when we move off Docker.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-compass}
     ports:
       - "5432:5432"
     volumes:
