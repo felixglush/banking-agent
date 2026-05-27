@@ -747,7 +747,14 @@ the `compass.policy.Decision` type.
 
 ### `workflows/send_invoice/activities.py` — `evaluate_policy` body
 
-Switches on phase. One activity, not three. Body sketch:
+Switches on phase. One activity, not three. Includes an eval-only
+ablation hatch (`COMPASS_POLICY_DISABLE=1` env var) for the Stage-7+
+policy-value-add measurement (build-plan §Stage 7 — Policy ablation
+eval). When the env var is set the activity short-circuits to
+`permit=True` with `policy_hash="disabled-for-eval"`; production code
+never sets this var.
+
+Body sketch:
 
 ```python
 @activity.defn

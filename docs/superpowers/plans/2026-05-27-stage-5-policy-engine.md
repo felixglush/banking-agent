@@ -3709,6 +3709,26 @@ async def evaluate_policy(args: EvaluatePolicyInput) -> PolicyDecisionPayload:
     """
     phase = Phase(args.phase)
 
+    # ---- eval-only ablation hatch ----------------------------------
+    # Stage-7+ policy-ablation eval (build-plan §Stage 7) flips this
+    # env var to measure the marginal value of the policy engine. When
+    # set, the activity short-circuits to permit=True with a sentinel
+    # policy_hash so audit_log queries can identify ablation runs.
+    # Zero impact on production (env var is never set).
+    if os.environ.get("COMPASS_POLICY_DISABLE") == "1":
+        activity.logger.warning(
+            "COMPASS_POLICY_DISABLE=1 — bypassing policy gate at phase=%s "
+            "(eval-only ablation; should never be set in production)",
+            phase.value,
+        )
+        return PolicyDecisionPayload(
+            permit=True,
+            policy_hash="disabled-for-eval",
+            rule_ids_fired=[],
+            escalations=[],
+            next_sequence_no=args.starting_sequence_no,
+        )
+
     try:
         async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
             policy_hash = await write_policy_snapshot(conn, "send_invoice", RULES)
@@ -3848,11 +3868,36 @@ async def execute_send(args: ExecuteSendInput) -> str:
     return invoice_id
 ```
 
-- [ ] **Step 2: Commit**
+- [ ] **Step 2: Smoke-test the ablation hatch**
+
+```bash
+COMPASS_POLICY_DISABLE=1 uv run python -c "
+import asyncio, os
+os.environ.setdefault('COMPASS_PG_DSN','postgresql://compass:compass@localhost:5432/compass_test')
+from workflows.send_invoice.activities import evaluate_policy, EvaluatePolicyInput
+from compass.policy import Phase
+async def main():
+    out = await evaluate_policy(EvaluatePolicyInput(
+        workflow_run_id='ablation-smoke',
+        starting_sequence_no=1,
+        phase=Phase.pre_action_proposal.value,
+        context={'proposal': {'total_cents': 99999999999}},
+    ))
+    assert out.permit is True
+    assert out.policy_hash == 'disabled-for-eval'
+    print('ablation hatch OK')
+asyncio.run(main())
+"
+```
+
+Expected: prints `ablation hatch OK`. Then unset the var so subsequent
+tests run the real engine: `unset COMPASS_POLICY_DISABLE`.
+
+- [ ] **Step 3: Commit**
 
 ```bash
 git add workflows/send_invoice/activities.py
-git commit -m "feat(stage-5): evaluate_policy body + audit_log validation hook"
+git commit -m "feat(stage-5): evaluate_policy body + audit_log validation hook + ablation hatch"
 ```
 
 ---
