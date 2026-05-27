@@ -16,6 +16,53 @@ build-plan §Stage 4 is the contract.
 | `workflow.py` | `SendInvoiceWorkflow` — agent loop → policy → wait_condition(approved) → execute_send → audit_log. |
 | `worker.py` | Loads `.env.local`, wires `OpenAIAgentsPlugin` + `StatefulMCPServerProvider("bank", …)`, runs the worker. |
 
+## Workflow diagram
+
+Solid arrows are the main control flow inside `SendInvoiceWorkflow.run`.
+Dashed arrows show how the external `approve` signal feeds the
+`wait_condition`. Orange = audit-log write; purple = Temporal activity;
+blue = terminal `WorkflowResult.outcome`.
+
+```mermaid
+flowchart TD
+    Start([SendInvoiceRequest]) --> Agent[Agent loop<br/>stateful MCP: bank<br/>Runner.run, max_turns=10]
+    Agent --> HasOutput{proposal?}
+    HasOutput -- no --> AuditNoOut[audit: agent_no_output]
+    AuditNoOut --> EndRejected1([policy_rejected])
+    HasOutput -- yes --> Policy[evaluate_policy]
+    Policy -- ApplicationError --> AuditEngineFail[audit: policy_engine_failure]
+    AuditEngineFail --> EndRejected2([policy_rejected])
+    Policy --> Permit{permit?}
+    Permit -- no --> AuditPolReject[audit: policy_rejected<br/>rule_ids_fired]
+    AuditPolReject --> EndRejected3([policy_rejected])
+    Permit -- yes --> Wait[wait_condition<br/>_approval is not None<br/>timeout=approval_timeout_seconds]
+    Wait -- timeout --> AuditTimeout[audit: declined<br/>reason=approval_timeout]
+    AuditTimeout --> EndTimeout([timeout])
+    Wait -- signal --> AuditSignal[audit: approval_signal]
+    AuditSignal --> Approved{approved?}
+    Approved -- no --> AuditDeclined[audit: declined]
+    AuditDeclined --> EndDeclined([declined])
+    Approved -- yes --> Execute[execute_send]
+    Execute --> AuditExecuted[audit: executed]
+    AuditExecuted --> EndSent([sent + invoice_id])
+
+    Signal[/approve signal/]:::signal -. first wins .-> SetApproval[_approval = decision]
+    Signal -. duplicate .-> AuditDup[audit: duplicate_approval_signal]
+    SetApproval -. unblocks .-> Wait
+
+    classDef audit fill:#fff4e6,stroke:#d9822b,color:#000
+    classDef terminal fill:#e6f3ff,stroke:#1f6feb,color:#000
+    classDef activity fill:#f0e6ff,stroke:#6f42c1,color:#000
+    classDef signal fill:#e8f7e8,stroke:#2da44e,color:#000
+    class AuditNoOut,AuditEngineFail,AuditPolReject,AuditTimeout,AuditSignal,AuditDeclined,AuditExecuted,AuditDup audit
+    class EndRejected1,EndRejected2,EndRejected3,EndTimeout,EndDeclined,EndSent terminal
+    class Agent,Policy,Execute activity
+```
+
+Every audit-write and activity above is allocated a monotonic
+`sequence_no` from workflow state, so retries collide on the
+`(workflow_run_id, sequence_no)` UNIQUE constraint and are idempotent.
+
 ## Configuration
 
 Drop into `.env.local` at the repo root (already gitignored):

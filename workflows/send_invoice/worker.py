@@ -57,12 +57,8 @@ def _setup_logging() -> None:
 
 
 def _setup_tracing() -> None:
-    """Wire Langfuse / OTLP tracing if ``LANGFUSE_OTLP_ENDPOINT`` is set.
-
-    Build-plan §Stage 4 calls Langfuse a deliverable, but bringing up a
-    Langfuse sidecar is orthogonal to the workflow itself. When the env
-    var is set we instrument and export OTLP; when it isn't, agent spans
-    still appear in the local console via the SDK's default sink.
+    """
+    Wire Langfuse / OTLP tracing if ``LANGFUSE_OTLP_ENDPOINT`` is set.
     """
     endpoint = os.environ.get("LANGFUSE_OTLP_ENDPOINT")
     if not endpoint:
