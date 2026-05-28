@@ -20,7 +20,6 @@ from typing import Any
 
 from compass.eval.orchestrator import EvalReport
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
 VALID_SUITES = {"functional", "policy_compliance", "cost_latency"}
 
 
@@ -31,6 +30,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--suites", required=True,
                    help="comma-separated: functional,policy_compliance,cost_latency")
     p.add_argument("--cases", default="", help="comma-separated case_id subset")
+    p.add_argument(
+        "--ground-truth-root",
+        type=Path,
+        default=Path.cwd() / "synthetic_account_1" / "ground_truth",
+        help="Path to the directory with train/ and holdout/ JSONL splits.",
+    )
+    p.add_argument(
+        "--task-queue",
+        default="send-invoice",
+        help="Temporal task queue the workflow worker polls.",
+    )
     p.add_argument("--ablation", action="store_true",
                    help="run twice: policy on then off, link via paired_run_id")
     p.add_argument("--holdout-justification", default=None,
@@ -61,9 +71,10 @@ def validate_args(ns: argparse.Namespace) -> None:
 
 
 def _git_sha() -> str:
+    """HEAD of the invoking repo (cwd), not of the compass install."""
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], cwd=REPO_ROOT,
+            ["git", "rev-parse", "HEAD"],
         ).decode().strip()
     except subprocess.CalledProcessError:
         return "unknown"
@@ -72,7 +83,7 @@ def _git_sha() -> str:
 def _git_dirty() -> bool:
     try:
         out = subprocess.check_output(
-            ["git", "status", "--porcelain"], cwd=REPO_ROOT,
+            ["git", "status", "--porcelain"],
         ).decode().strip()
         return bool(out)
     except subprocess.CalledProcessError:
@@ -101,7 +112,7 @@ async def amain(argv: list[str]) -> int:
     from compass.eval.sources.eval_runs import HoldoutCapExceeded  # noqa: PLC0415
 
     dsn = os.environ["COMPASS_PG_DSN"]
-    ground_truth_root = REPO_ROOT / "synthetic_account_1" / "ground_truth"
+    ground_truth_root: Path = ns.ground_truth_root
     mode = Mode(ns.mode)
     suites = [s.strip() for s in ns.suites.split(",") if s.strip()]
 
@@ -133,7 +144,7 @@ async def amain(argv: list[str]) -> int:
 
     temporal_target = os.environ.get("TEMPORAL_TARGET", "localhost:7233")
     temporal_client = await Client.connect(temporal_target)
-    runner = TemporalWorkflowRunner(client=temporal_client, task_queue="send-invoice")
+    runner = TemporalWorkflowRunner(client=temporal_client, task_queue=ns.task_queue)
 
     rule_src = PostgresAuditLogSource(dsn=dsn)
     eval_store = PostgresEvalRunStore(dsn=dsn)
