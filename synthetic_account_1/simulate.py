@@ -958,8 +958,6 @@ def _generate_ground_truth(
     for inv in invoices:
         invoices_by_customer.setdefault(cast(str, inv["customer_id"]), []).append(inv)
 
-    contracts_by_customer = {c["customer_id"]: c for c in contracts}
-
     # --- Invoice resolution labels ---------------------------------
     # Pick 120 cases, one per (customer, source_type) combination where
     # an invoice exists. Deterministic by sorting then capping.
@@ -1086,51 +1084,24 @@ def _generate_ground_truth(
     scope_cases = in_scope + out_of_scope
 
     # --- Policy compliance labels ----------------------------------
-    # For each invoice resolution case, declare the rule IDs that
-    # should fire. Stage 5 will create these rules; we pre-name them
-    # so the corpus is ready.
+    # ``expected_fired_rules`` lists rules whose predicate is expected
+    # to return a Violation (the engine emits event_kind='rule_fired').
+    # A rule whose predicate returns None emits 'rule_skipped' and is
+    # NOT in this set. Sent / declined cases pass cleanly so the set is
+    # empty; policy_rejected cases name the specific Billing-integrity
+    # primitive expected to trip.
     policy_cases: list[dict[str, Any]] = []
     for case in invoice_cases:
-        if case.get("expected_outcome") == "policy_rejected":
-            continue  # handled separately below
-        expected_rules: list[str] = [
-            "intent_must_be_send_invoice",
-            "require_amount_source",
-            "currency_consistency_check",
-        ]
-        src = cast(str, cast(dict[str, Any], case["expected"])["source_type"])
-        if src == "contract":
-            expected_rules.append("contract_consistency_check")
-            customer_id = cast(str, cast(dict[str, Any], case["expected"])["customer_id"])
-            contract = contracts_by_customer.get(customer_id)
-            if contract is not None and contract["billing_structure"]["kind"] == "t_and_m":
-                expected_rules.append("prohibit_exceed_contract_cap")
+        outcome = case.get("expected_outcome")
+        if outcome == "policy_rejected":
+            expected_rules = [cast(str, case["expected_fired_rule"])]
+        else:
+            expected_rules = []
         policy_cases.append(
             {
                 "case_id": f"pc_{case['case_id']}",
                 "invoice_case_id": case["case_id"],
-                "expected_fired_rules": sorted(expected_rules),
-            }
-        )
-
-    # Stage 7: policy_rejected cases declare which Billing-integrity rule
-    # they intentionally trip. The framework-core rules always fire too.
-    for case in invoice_cases:
-        if case.get("expected_outcome") != "policy_rejected":
-            continue
-        pr_rules = sorted(
-            {
-                "intent_must_be_send_invoice",
-                "require_amount_source",
-                "currency_consistency_check",
-                cast(str, case["expected_fired_rule"]),
-            }
-        )
-        policy_cases.append(
-            {
-                "case_id": f"pc_{case['case_id']}",
-                "invoice_case_id": case["case_id"],
-                "expected_fired_rules": pr_rules,
+                "expected_fired_rules": expected_rules,
             }
         )
 
