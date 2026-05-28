@@ -7,7 +7,7 @@ what ``execute_send`` persists. Defined here (not in ``mcp_bank.models``)
 because the MCP surface and the workflow surface evolve independently.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -83,11 +83,11 @@ class PolicyDecisionPayload(BaseModel):
     permit: bool
     policy_hash: str
     rule_ids_fired: list[str] = []
-    escalations: list[dict] = []
+    escalations: list[dict[str, Any]] = []
     next_sequence_no: int
 
 
-WorkflowOutcome = Literal["sent", "policy_rejected", "declined", "timeout"]
+WorkflowOutcome = Literal["sent", "policy_rejected", "declined", "timeout", "unsupported"]
 
 
 class WorkflowResult(BaseModel):

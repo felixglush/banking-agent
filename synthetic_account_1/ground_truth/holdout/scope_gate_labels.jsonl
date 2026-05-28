@@ -1,22 +1,22 @@
-{"case_id":"sg_0002","expected_classification":"in_scope","input":"Please send an invoice to Acme Corporation for $X."}
-{"case_id":"sg_0005","expected_classification":"in_scope","input":"Please send an invoice to Wayne Enterprises for $X."}
-{"case_id":"sg_0010","expected_classification":"in_scope","input":"Please send an invoice to Wonka Systems for $X."}
-{"case_id":"sg_0011","expected_classification":"in_scope","input":"Please send an invoice to Umbrella Bio for $X."}
-{"case_id":"sg_0012","expected_classification":"in_scope","input":"Please send an invoice to Meridian Systems for $X."}
-{"case_id":"sg_0019","expected_classification":"in_scope","input":"Please send an invoice to Halcyon Solutions for $X."}
-{"case_id":"sg_0027","expected_classification":"in_scope","input":"Please send an invoice to Aperture Logistics for $X."}
-{"case_id":"sg_0028","expected_classification":"in_scope","input":"Please send an invoice to Bishop Capital for $X."}
-{"case_id":"sg_0031","expected_classification":"in_scope","input":"Please send an invoice to Vandelay Partners for $X."}
-{"case_id":"sg_0035","expected_classification":"in_scope","input":"Please send an invoice to Acme Labs for $X."}
-{"case_id":"sg_0037","expected_classification":"in_scope","input":"Please send an invoice to Wernham Networks for $X."}
-{"case_id":"sg_0041","expected_classification":"in_scope","input":"Please send an invoice to Pinwheel Logistics for $X."}
-{"case_id":"sg_0042","expected_classification":"in_scope","input":"Please send an invoice to Dunder Health for $X."}
-{"case_id":"sg_0046","expected_classification":"in_scope","input":"Please send an invoice to Meridian Works for $X."}
-{"case_id":"sg_0047","expected_classification":"in_scope","input":"Please send an invoice to Sabre Labs for $X."}
-{"case_id":"sg_0048","expected_classification":"in_scope","input":"Please send an invoice to Soylent Holdings for $X."}
-{"case_id":"sg_0050","expected_classification":"in_scope","input":"Please send an invoice to Umbrella Analytics for $X."}
-{"case_id":"sg_0054","expected_classification":"in_scope","input":"Please send an invoice to Black Mesa Health for $X."}
-{"case_id":"sg_0057","expected_classification":"in_scope","input":"Please send an invoice to Pearson Group for $X."}
+{"case_id":"sg_0002","expected_classification":"send_invoice","input":"Please send an invoice to Acme Corporation for $X."}
+{"case_id":"sg_0005","expected_classification":"send_invoice","input":"Please send an invoice to Wayne Enterprises for $X."}
+{"case_id":"sg_0010","expected_classification":"send_invoice","input":"Please send an invoice to Wonka Systems for $X."}
+{"case_id":"sg_0011","expected_classification":"send_invoice","input":"Please send an invoice to Umbrella Bio for $X."}
+{"case_id":"sg_0012","expected_classification":"send_invoice","input":"Please send an invoice to Meridian Systems for $X."}
+{"case_id":"sg_0019","expected_classification":"send_invoice","input":"Please send an invoice to Halcyon Solutions for $X."}
+{"case_id":"sg_0027","expected_classification":"send_invoice","input":"Please send an invoice to Aperture Logistics for $X."}
+{"case_id":"sg_0028","expected_classification":"send_invoice","input":"Please send an invoice to Bishop Capital for $X."}
+{"case_id":"sg_0031","expected_classification":"send_invoice","input":"Please send an invoice to Vandelay Partners for $X."}
+{"case_id":"sg_0035","expected_classification":"send_invoice","input":"Please send an invoice to Acme Labs for $X."}
+{"case_id":"sg_0037","expected_classification":"send_invoice","input":"Please send an invoice to Wernham Networks for $X."}
+{"case_id":"sg_0041","expected_classification":"send_invoice","input":"Please send an invoice to Pinwheel Logistics for $X."}
+{"case_id":"sg_0042","expected_classification":"send_invoice","input":"Please send an invoice to Dunder Health for $X."}
+{"case_id":"sg_0046","expected_classification":"send_invoice","input":"Please send an invoice to Meridian Works for $X."}
+{"case_id":"sg_0047","expected_classification":"send_invoice","input":"Please send an invoice to Sabre Labs for $X."}
+{"case_id":"sg_0048","expected_classification":"send_invoice","input":"Please send an invoice to Soylent Holdings for $X."}
+{"case_id":"sg_0050","expected_classification":"send_invoice","input":"Please send an invoice to Umbrella Analytics for $X."}
+{"case_id":"sg_0054","expected_classification":"send_invoice","input":"Please send an invoice to Black Mesa Health for $X."}
+{"case_id":"sg_0057","expected_classification":"send_invoice","input":"Please send an invoice to Pearson Group for $X."}
 {"case_id":"sg_0066","expected_classification":"out_of_scope","input":"Cancel the subscription with Datadog."}
 {"case_id":"sg_0068","expected_classification":"out_of_scope","input":"Update the company address on file."}
 {"case_id":"sg_0077","expected_classification":"out_of_scope","input":"Can you transfer $5,000 from operating to payroll?"}

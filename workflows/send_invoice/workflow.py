@@ -1,22 +1,33 @@
-"""``SendInvoiceWorkflow`` — Stage 5: policy engine wired into the gate.
+"""``SendInvoiceWorkflow`` — Stage 6: scope gate added at workflow entry.
 
-Per docs/build-plan.md §Stage 5 and
-docs/superpowers/specs/2026-05-27-stage-5-policy-engine-design.md:
+Per docs/build-plan.md §Stage 6 and
+docs/superpowers/specs/2026-05-27-stage-6-intent-classifier-design.md:
 
-  Runner.run(agent)  →  build context  →  evaluate_policy(pre_action_proposal)
-       │                                            │
-       │                                            ▼
-       │                                   wait_condition(approved)
-       │                                            │
-       │                                            ▼
-       │                          evaluate_policy(pre_execute)
-       │                                            │
-       │                                            ▼
-       │                                       execute_send
-       │                                            │
-       │                                            ▼
-       │                                       audit_log
-       │                                       (is_terminal_event=True)
+  Runner.run(scope_gate)  →  evaluate_policy(input_validation)
+       │                              │
+       │                       (out_of_scope)
+       │                              │
+       │                              ▼
+       │                       audit_log(unsupported, is_terminal_event=True)
+       │                              │
+       │                              ▼
+       │                            END
+       │  (send_invoice)
+       ▼
+  Runner.run(main_agent)  →  build context  →  evaluate_policy(pre_action_proposal)
+       │                                                │
+       │                                                ▼
+       │                                       wait_condition(approved)
+       │                                                │
+       │                                                ▼
+       │                              evaluate_policy(pre_execute)
+       │                                                │
+       │                                                ▼
+       │                                           execute_send
+       │                                                │
+       │                                                ▼
+       │                                           audit_log
+       │                                           (is_terminal_event=True)
        │
        └────────── any block / decline / timeout → audit_log → END
 """
@@ -32,7 +43,7 @@ from temporalio.workflow import ActivityConfig
 with workflow.unsafe.imports_passed_through():
     from agents import Runner
 
-    from compass.policy import Phase
+    from compass.policy import Actor, AuditPayload, Phase, ToolCallRecord
     from workflows.send_invoice.activities import (
         AuditEvent,
         EvaluatePolicyInput,
@@ -48,6 +59,7 @@ with workflow.unsafe.imports_passed_through():
         hash_proposal,
         project_resolved_entities,
     )
+    from workflows.send_invoice.scope_gate import build_scope_gate_agent
     from workflows.send_invoice.types import (
         ApprovalDecision,
         SendInvoiceRequest,
@@ -64,7 +76,7 @@ class SendInvoiceWorkflow:
         self._next_seq = 0
         self._proposal_hash: str | None = None
         self._policy_hash: str | None = None
-        self._tool_calls: list[dict] = []
+        self._tool_calls: list[ToolCallRecord] = []
         self._reasoning_text: str = ""
 
     @workflow.signal(name="approve")
@@ -81,6 +93,75 @@ class SendInvoiceWorkflow:
     @workflow.run
     async def run(self, req: SendInvoiceRequest) -> WorkflowResult:
         run_id = workflow.info().workflow_id
+
+        # ---- 0. scope gate -------------------------------------------------
+        scope_agent = build_scope_gate_agent()
+        gate_result = await Runner.run(
+            scope_agent,
+            input=req.user_message,
+            max_turns=1,
+        )
+        classification = gate_result.final_output
+        if classification is None:
+            await self._audit(
+                phase="input_validation",
+                event_kind="agent_no_output",
+                payload={"user_message": req.user_message},
+                decision="block",
+            )
+            return WorkflowResult(
+                outcome="unsupported",
+                detail="Scope gate returned no structured classification.",
+            )
+
+        input_ctx = {
+            "user_message": req.user_message,
+            "classification": classification.model_dump(),
+            "workflow_run_id": run_id,
+        }
+        try:
+            payload = await workflow.execute_activity(
+                evaluate_policy,
+                EvaluatePolicyInput(
+                    workflow_run_id=run_id,
+                    starting_sequence_no=self._next_seq + 1,
+                    phase=Phase.input_validation.value,
+                    context=input_ctx,
+                ),
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_POLICY_DECISION_RETRY,
+            )
+        except ActivityError as e:
+            cause = e.cause if isinstance(e.cause, ApplicationError) else None
+            err_type = cause.type if cause else None
+            # One rule at this phase today; bump conservatively past
+            # any sink writes the activity made before raising.
+            self._next_seq += 2
+            await self._audit(
+                phase="input_validation",
+                event_kind="unsupported",
+                payload={
+                    "user_message": req.user_message,
+                    "classification": classification.model_dump(),
+                    "error_type": err_type,
+                    "message": str(e),
+                },
+                decision="block",
+            )
+            return WorkflowResult(outcome="unsupported", detail=str(e))
+
+        self._policy_hash = payload.policy_hash
+        self._next_seq = payload.next_sequence_no - 1
+
+        await self._audit(
+            phase="input_validation",
+            event_kind="intent_classified",
+            payload={
+                "user_message": req.user_message,
+                "classification": classification.model_dump(),
+            },
+            decision="permit",
+        )
 
         # ---- 1. agent loop --------------------------------------------------
         async with stateful_mcp_server(
@@ -255,10 +336,10 @@ class SendInvoiceWorkflow:
         *,
         phase: str,
         event_kind: str,
-        payload: dict[str, object],
+        payload: AuditPayload,
         decision: str | None = None,
         rule_id: str | None = None,
-        actor: dict[str, object] | None = None,
+        actor: Actor | None = None,
         is_terminal_event: bool = False,
     ) -> None:
         seq = self._allocate_seq()

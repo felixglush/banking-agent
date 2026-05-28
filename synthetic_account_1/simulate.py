@@ -1000,7 +1000,7 @@ def _generate_ground_truth(
         {
             "case_id": f"sg_{i + 1:04d}",
             "input": f"Please send an invoice to {customers[i % len(customers)]['name']} for $X.",
-            "expected_classification": "in_scope",
+            "expected_classification": "send_invoice",
         }
         for i in range(60)
     ]
@@ -1031,7 +1031,7 @@ def _generate_ground_truth(
     policy_cases: list[dict[str, Any]] = []
     for case in invoice_cases:
         expected_rules: list[str] = [
-            "scope_gate_in_scope",
+            "intent_must_be_send_invoice",
             "require_amount_source",
             "currency_consistency_check",
         ]

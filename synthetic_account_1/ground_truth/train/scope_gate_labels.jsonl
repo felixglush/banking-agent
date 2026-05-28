@@ -1,44 +1,44 @@
-{"case_id":"sg_0001","expected_classification":"in_scope","input":"Please send an invoice to Acme Corp for $X."}
-{"case_id":"sg_0003","expected_classification":"in_scope","input":"Please send an invoice to Stark Industries for $X."}
-{"case_id":"sg_0004","expected_classification":"in_scope","input":"Please send an invoice to Stark Industrial for $X."}
-{"case_id":"sg_0006","expected_classification":"in_scope","input":"Please send an invoice to Wayne Enterprise for $X."}
-{"case_id":"sg_0007","expected_classification":"in_scope","input":"Please send an invoice to Globex for $X."}
-{"case_id":"sg_0008","expected_classification":"in_scope","input":"Please send an invoice to Globex Inc for $X."}
-{"case_id":"sg_0009","expected_classification":"in_scope","input":"Please send an invoice to Pemberton Labs for $X."}
-{"case_id":"sg_0013","expected_classification":"in_scope","input":"Please send an invoice to Pearson Bio for $X."}
-{"case_id":"sg_0014","expected_classification":"in_scope","input":"Please send an invoice to Meridian Solutions for $X."}
-{"case_id":"sg_0015","expected_classification":"in_scope","input":"Please send an invoice to Cyberdyne Studios for $X."}
-{"case_id":"sg_0016","expected_classification":"in_scope","input":"Please send an invoice to Soylent Analytics for $X."}
-{"case_id":"sg_0017","expected_classification":"in_scope","input":"Please send an invoice to Acme Health for $X."}
-{"case_id":"sg_0018","expected_classification":"in_scope","input":"Please send an invoice to Wonka Group for $X."}
-{"case_id":"sg_0020","expected_classification":"in_scope","input":"Please send an invoice to Northwind Logistics for $X."}
-{"case_id":"sg_0021","expected_classification":"in_scope","input":"Please send an invoice to Tyrell Capital for $X."}
-{"case_id":"sg_0022","expected_classification":"in_scope","input":"Please send an invoice to Sterling Robotics for $X."}
-{"case_id":"sg_0023","expected_classification":"in_scope","input":"Please send an invoice to Pinwheel Partners for $X."}
-{"case_id":"sg_0024","expected_classification":"in_scope","input":"Please send an invoice to Umbrella Works for $X."}
-{"case_id":"sg_0025","expected_classification":"in_scope","input":"Please send an invoice to Acme Studios for $X."}
-{"case_id":"sg_0026","expected_classification":"in_scope","input":"Please send an invoice to Stark Technologies for $X."}
-{"case_id":"sg_0029","expected_classification":"in_scope","input":"Please send an invoice to Wernham Health for $X."}
-{"case_id":"sg_0030","expected_classification":"in_scope","input":"Please send an invoice to Acme Systems for $X."}
-{"case_id":"sg_0032","expected_classification":"in_scope","input":"Please send an invoice to Pied Piper Bio for $X."}
-{"case_id":"sg_0033","expected_classification":"in_scope","input":"Please send an invoice to Acme Energy for $X."}
-{"case_id":"sg_0034","expected_classification":"in_scope","input":"Please send an invoice to Pemberton Robotics for $X."}
-{"case_id":"sg_0036","expected_classification":"in_scope","input":"Please send an invoice to Dunder Robotics for $X."}
-{"case_id":"sg_0038","expected_classification":"in_scope","input":"Please send an invoice to Acme Holdings for $X."}
-{"case_id":"sg_0039","expected_classification":"in_scope","input":"Please send an invoice to Pendant Industries for $X."}
-{"case_id":"sg_0040","expected_classification":"in_scope","input":"Please send an invoice to Wayne Logistics for $X."}
-{"case_id":"sg_0043","expected_classification":"in_scope","input":"Please send an invoice to Pied Piper Energy for $X."}
-{"case_id":"sg_0044","expected_classification":"in_scope","input":"Please send an invoice to Pearson Networks for $X."}
-{"case_id":"sg_0045","expected_classification":"in_scope","input":"Please send an invoice to Aperture Works for $X."}
-{"case_id":"sg_0049","expected_classification":"in_scope","input":"Please send an invoice to Pearson Energy for $X."}
-{"case_id":"sg_0051","expected_classification":"in_scope","input":"Please send an invoice to Massive Dynamic Analytics for $X."}
-{"case_id":"sg_0052","expected_classification":"in_scope","input":"Please send an invoice to Sterling Partners for $X."}
-{"case_id":"sg_0053","expected_classification":"in_scope","input":"Please send an invoice to Stark Systems for $X."}
-{"case_id":"sg_0055","expected_classification":"in_scope","input":"Please send an invoice to Soylent Partners for $X."}
-{"case_id":"sg_0056","expected_classification":"in_scope","input":"Please send an invoice to Gekko Group for $X."}
-{"case_id":"sg_0058","expected_classification":"in_scope","input":"Please send an invoice to Aperture Studios for $X."}
-{"case_id":"sg_0059","expected_classification":"in_scope","input":"Please send an invoice to Dunder Technologies for $X."}
-{"case_id":"sg_0060","expected_classification":"in_scope","input":"Please send an invoice to Initech Systems for $X."}
+{"case_id":"sg_0001","expected_classification":"send_invoice","input":"Please send an invoice to Acme Corp for $X."}
+{"case_id":"sg_0003","expected_classification":"send_invoice","input":"Please send an invoice to Stark Industries for $X."}
+{"case_id":"sg_0004","expected_classification":"send_invoice","input":"Please send an invoice to Stark Industrial for $X."}
+{"case_id":"sg_0006","expected_classification":"send_invoice","input":"Please send an invoice to Wayne Enterprise for $X."}
+{"case_id":"sg_0007","expected_classification":"send_invoice","input":"Please send an invoice to Globex for $X."}
+{"case_id":"sg_0008","expected_classification":"send_invoice","input":"Please send an invoice to Globex Inc for $X."}
+{"case_id":"sg_0009","expected_classification":"send_invoice","input":"Please send an invoice to Pemberton Labs for $X."}
+{"case_id":"sg_0013","expected_classification":"send_invoice","input":"Please send an invoice to Pearson Bio for $X."}
+{"case_id":"sg_0014","expected_classification":"send_invoice","input":"Please send an invoice to Meridian Solutions for $X."}
+{"case_id":"sg_0015","expected_classification":"send_invoice","input":"Please send an invoice to Cyberdyne Studios for $X."}
+{"case_id":"sg_0016","expected_classification":"send_invoice","input":"Please send an invoice to Soylent Analytics for $X."}
+{"case_id":"sg_0017","expected_classification":"send_invoice","input":"Please send an invoice to Acme Health for $X."}
+{"case_id":"sg_0018","expected_classification":"send_invoice","input":"Please send an invoice to Wonka Group for $X."}
+{"case_id":"sg_0020","expected_classification":"send_invoice","input":"Please send an invoice to Northwind Logistics for $X."}
+{"case_id":"sg_0021","expected_classification":"send_invoice","input":"Please send an invoice to Tyrell Capital for $X."}
+{"case_id":"sg_0022","expected_classification":"send_invoice","input":"Please send an invoice to Sterling Robotics for $X."}
+{"case_id":"sg_0023","expected_classification":"send_invoice","input":"Please send an invoice to Pinwheel Partners for $X."}
+{"case_id":"sg_0024","expected_classification":"send_invoice","input":"Please send an invoice to Umbrella Works for $X."}
+{"case_id":"sg_0025","expected_classification":"send_invoice","input":"Please send an invoice to Acme Studios for $X."}
+{"case_id":"sg_0026","expected_classification":"send_invoice","input":"Please send an invoice to Stark Technologies for $X."}
+{"case_id":"sg_0029","expected_classification":"send_invoice","input":"Please send an invoice to Wernham Health for $X."}
+{"case_id":"sg_0030","expected_classification":"send_invoice","input":"Please send an invoice to Acme Systems for $X."}
+{"case_id":"sg_0032","expected_classification":"send_invoice","input":"Please send an invoice to Pied Piper Bio for $X."}
+{"case_id":"sg_0033","expected_classification":"send_invoice","input":"Please send an invoice to Acme Energy for $X."}
+{"case_id":"sg_0034","expected_classification":"send_invoice","input":"Please send an invoice to Pemberton Robotics for $X."}
+{"case_id":"sg_0036","expected_classification":"send_invoice","input":"Please send an invoice to Dunder Robotics for $X."}
+{"case_id":"sg_0038","expected_classification":"send_invoice","input":"Please send an invoice to Acme Holdings for $X."}
+{"case_id":"sg_0039","expected_classification":"send_invoice","input":"Please send an invoice to Pendant Industries for $X."}
+{"case_id":"sg_0040","expected_classification":"send_invoice","input":"Please send an invoice to Wayne Logistics for $X."}
+{"case_id":"sg_0043","expected_classification":"send_invoice","input":"Please send an invoice to Pied Piper Energy for $X."}
+{"case_id":"sg_0044","expected_classification":"send_invoice","input":"Please send an invoice to Pearson Networks for $X."}
+{"case_id":"sg_0045","expected_classification":"send_invoice","input":"Please send an invoice to Aperture Works for $X."}
+{"case_id":"sg_0049","expected_classification":"send_invoice","input":"Please send an invoice to Pearson Energy for $X."}
+{"case_id":"sg_0051","expected_classification":"send_invoice","input":"Please send an invoice to Massive Dynamic Analytics for $X."}
+{"case_id":"sg_0052","expected_classification":"send_invoice","input":"Please send an invoice to Sterling Partners for $X."}
+{"case_id":"sg_0053","expected_classification":"send_invoice","input":"Please send an invoice to Stark Systems for $X."}
+{"case_id":"sg_0055","expected_classification":"send_invoice","input":"Please send an invoice to Soylent Partners for $X."}
+{"case_id":"sg_0056","expected_classification":"send_invoice","input":"Please send an invoice to Gekko Group for $X."}
+{"case_id":"sg_0058","expected_classification":"send_invoice","input":"Please send an invoice to Aperture Studios for $X."}
+{"case_id":"sg_0059","expected_classification":"send_invoice","input":"Please send an invoice to Dunder Technologies for $X."}
+{"case_id":"sg_0060","expected_classification":"send_invoice","input":"Please send an invoice to Initech Systems for $X."}
 {"case_id":"sg_0061","expected_classification":"out_of_scope","input":"Can you transfer $5,000 from operating to payroll?"}
 {"case_id":"sg_0062","expected_classification":"out_of_scope","input":"What's the weather in San Francisco?"}
 {"case_id":"sg_0063","expected_classification":"out_of_scope","input":"Refund the last payment we got from Acme."}

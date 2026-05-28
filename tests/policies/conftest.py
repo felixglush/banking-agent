@@ -32,10 +32,8 @@ def happy_proposal() -> dict[str, Any]:
 
 def happy_resolved_entities() -> dict[str, Any]:
     return {
-        "customer": {"id": "cust_alpha", "name": "Acme",
-                     "kyc_status": "verified"},
-        "contract": {"id": "ct_alpha_current", "currency": "USD",
-                     "monthly_hour_cap": 40},
+        "customer": {"id": "cust_alpha", "name": "Acme", "kyc_status": "verified"},
+        "contract": {"id": "ct_alpha_current", "currency": "USD", "monthly_hour_cap": 40},
         "rate_card_entries": [],
         "time_entries": [],
     }
@@ -51,6 +49,30 @@ def happy_pre_action_proposal_ctx() -> dict[str, Any]:
         "resolved_entities": happy_resolved_entities(),
         "tool_calls": happy_tool_calls(),
         "reasoning_text": "OK",
+        "workflow_run_id": "wf-test",
+    }
+
+
+def happy_input_validation_ctx() -> dict[str, Any]:
+    return {
+        "user_message": "Please send an invoice to Acme Corp for $7,200.",
+        "classification": {
+            "intent": "send_invoice",
+            "confidence": 0.98,
+            "rationale": "Direct invoice request.",
+        },
+        "workflow_run_id": "wf-test",
+    }
+
+
+def out_of_scope_input_validation_ctx() -> dict[str, Any]:
+    return {
+        "user_message": "What's the weather in SF?",
+        "classification": {
+            "intent": "out_of_scope",
+            "confidence": 0.95,
+            "rationale": "Weather query is not a billing operation.",
+        },
         "workflow_run_id": "wf-test",
     }
 

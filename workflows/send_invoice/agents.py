@@ -1,11 +1,12 @@
 """``main_agent`` for the SendInvoice workflow.
 
-Single agent at Stage 4 — no sub-agents, no handoffs, no scope-gate
-classifier (Stage 6 adds that). The agent reads the ``bank`` MCP
-(``mcp_bank/``), drafts an ``InvoiceProposal``, and returns. Side
-effects live in workflow-step activities outside ``Runner.run``.
+The main agent reads the ``bank`` MCP (``mcp_bank/``), drafts an
+``InvoiceProposal``, and returns. Side effects live in workflow-step
+activities outside ``Runner.run``. A separate scope-gate sub-agent
+(``workflows.send_invoice.scope_gate``) runs first and decides
+whether the request belongs to this workflow at all.
 
-Model default is ``gpt-5-nano`` (overridable via ``OPENAI_MODEL``).
+Model default is ``gpt-4.1-mini`` (overridable via ``OPENAI_MODEL``).
 Credentials via ``OPENAI_API_KEY``.
 """
 

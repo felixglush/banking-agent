@@ -13,14 +13,17 @@ from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any
 
-from compass.policy.types import Predicate
+from compass.policy.types import Predicate, PredicateFn
+
+PrimitiveFactory = Callable[..., PredicateFn]
+RegisteredFactory = Callable[..., Predicate]
 
 # Module-level catalogue. Public surface is ``list_primitives()``;
 # direct access is allowed inside tests (see conftest auto-reset).
-_REGISTRY: dict[str, Callable[..., Predicate]] = {}
+_REGISTRY: dict[str, RegisteredFactory] = {}
 
 
-def primitive(name: str) -> Callable[[Callable[..., Callable]], Callable[..., Predicate]]:
+def primitive(name: str) -> Callable[[PrimitiveFactory], RegisteredFactory]:
     """Register a primitive factory under ``name``.
 
     The decorated factory MUST take keyword-only arguments (so the
@@ -29,7 +32,7 @@ def primitive(name: str) -> Callable[[Callable[..., Callable]], Callable[..., Pr
     that callable + name + frozen params into a Predicate.
     """
 
-    def decorator(factory: Callable[..., Callable]) -> Callable[..., Predicate]:
+    def decorator(factory: PrimitiveFactory) -> RegisteredFactory:
         @functools.wraps(factory)
         def wrapped(**params: Any) -> Predicate:
             fn = factory(**params)
@@ -43,7 +46,7 @@ def primitive(name: str) -> Callable[[Callable[..., Callable]], Callable[..., Pr
     return decorator
 
 
-def list_primitives() -> dict[str, Callable[..., Predicate]]:
+def list_primitives() -> dict[str, RegisteredFactory]:
     """Snapshot of the registry, keyed by primitive name."""
     return dict(_REGISTRY)
 

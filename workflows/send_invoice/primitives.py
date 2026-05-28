@@ -13,11 +13,11 @@ those into the expected shape.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from compass.policy.paths import MISSING, resolve_dotted
 from compass.policy.registry import primitive
-from compass.policy.types import Violation
+from compass.policy.types import PolicyContext, Violation
 
 
 @primitive("require_amount_source")
@@ -30,7 +30,7 @@ def require_amount_source():
     """
     VALID = {"contract", "rate_card", "time_tracking", "user_specified"}
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         lines = resolve_dotted(ctx, "proposal.line_items")
         if lines is MISSING or not isinstance(lines, list):
             return Violation(
@@ -38,7 +38,7 @@ def require_amount_source():
                 message="proposal.line_items missing or not a list",
                 evidence={"reason": "missing_line_items"},
             )
-        for i, line in enumerate(lines):
+        for i, line in enumerate(cast(list[dict[str, Any]], lines)):
             stype = line.get("source_type")
             if stype not in VALID:
                 return Violation(
@@ -46,7 +46,7 @@ def require_amount_source():
                     message=f"line {i} has invalid source_type {stype!r}",
                     evidence={"line_no": i, "source_type": stype, "valid": sorted(VALID)},
                 )
-            refs = line.get("source_refs") or []
+            refs: list[Any] = line.get("source_refs") or []
             if not refs:
                 return Violation(
                     rule_id="",
@@ -67,14 +67,16 @@ def contract_consistency_check():
     optional — if no contract was queried, the rule skips.
     """
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         contract = resolve_dotted(ctx, "resolved_entities.contract")
         if contract is MISSING or contract is None:
             return None
         proposal = resolve_dotted(ctx, "proposal")
         if proposal is MISSING:
             return Violation(
-                rule_id="", message="proposal missing", evidence={},
+                rule_id="",
+                message="proposal missing",
+                evidence={},
             )
         proposal_currency = proposal.get("currency")
         contract_currency = contract.get("currency")
@@ -104,7 +106,7 @@ def prohibit_exceed_contract_cap():
     Other source types don't bill against the cap.
     """
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         contract = resolve_dotted(ctx, "resolved_entities.contract")
         if contract is MISSING or contract is None:
             return None
@@ -114,9 +116,10 @@ def prohibit_exceed_contract_cap():
         lines = resolve_dotted(ctx, "proposal.line_items")
         if lines is MISSING or not isinstance(lines, list):
             return None
+        typed_lines = cast(list[dict[str, Any]], lines)
         hours = sum(
             line.get("quantity_micros", 0) / 1_000_000
-            for line in lines
+            for line in typed_lines
             if line.get("source_type") == "time_tracking"
         )
         if hours > cap:
@@ -146,7 +149,7 @@ def currency_consistency_check():
     currency, fire.
     """
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         proposal = resolve_dotted(ctx, "proposal")
         if proposal is MISSING:
             return None
@@ -154,10 +157,8 @@ def currency_consistency_check():
         rate_cards = resolve_dotted(ctx, "resolved_entities.rate_card_entries")
         if rate_cards is MISSING or not isinstance(rate_cards, list):
             return None
-        mismatched = [
-            rc.get("id") for rc in rate_cards
-            if rc.get("currency") != proposal_currency
-        ]
+        typed_cards = cast(list[dict[str, Any]], rate_cards)
+        mismatched = [rc.get("id") for rc in typed_cards if rc.get("currency") != proposal_currency]
         if mismatched:
             return Violation(
                 rule_id="",

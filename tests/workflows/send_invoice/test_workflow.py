@@ -36,22 +36,37 @@ from workflows.send_invoice.workflow import SendInvoiceWorkflow
 
 
 @pytest.fixture(autouse=True)
-def _disable_policy_for_orchestration_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+def _disable_policy_for_orchestration_tests(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Stage-5 policy engine blocks runs where the agent didn't query MCP.
     These tests skip the policy gate to keep their focus on orchestration."""
     monkeypatch.setenv("COMPASS_POLICY_DISABLE", "1")
 
 
-def _proposal_response(proposal: dict[str, Any] | None = None) -> TestModel:
-    """A model that always returns the given proposal as a final message.
+_DEFAULT_CLASSIFICATION = {
+    "intent": "send_invoice",
+    "confidence": 0.95,
+    "rationale": "User asked to send an invoice.",
+}
 
-    The Agents SDK parses the assistant's text content against
-    ``output_type=InvoiceProposal`` to recover the structured output;
-    a one-shot JSON message is the simplest fake-model shape.
+
+def _proposal_response(
+    proposal: dict[str, Any] | None = None,
+    classification: dict[str, Any] | None = None,
+) -> TestModel:
+    """Two-shot fake model: scope-gate classification, then proposal.
+
+    Stage 6 inserted ``Runner.run(scope_gate_agent, ...)`` before the
+    main agent runs. Each Runner.run call consumes one model response;
+    the SDK parses each response against the calling agent's
+    ``output_type`` (IntentClassification first, InvoiceProposal
+    second), so order matters.
     """
     payload = proposal if proposal is not None else proposal_dict()
-    text = json.dumps(payload)
-    return TestModel(lambda: ResponseBuilders.output_message(text))
+    cls = classification if classification is not None else _DEFAULT_CLASSIFICATION
+    responses = iter([json.dumps(cls), json.dumps(payload)])
+    return TestModel(lambda: ResponseBuilders.output_message(next(responses)))
 
 
 def _new_workflow_id() -> str:
@@ -85,11 +100,18 @@ async def test_happy_path_writes_invoice_and_full_audit(
     rows = await _fetch_audit(workflow_id)
     kinds = [r["event_kind"] for r in rows]
     # With COMPASS_POLICY_DISABLE=1 the policy activity emits no audit
-    # rows; only approval_signal + the terminal executed row remain.
-    assert kinds == ["approval_signal", "executed"]
-    assert [r["phase"] for r in rows] == ["pre_execute", "audit_validation"]
-    assert rows[0]["actor"] == {"user_id": "alice", "auth_method": "demo_cli"}
+    # rule rows. The workflow's own _audit calls remain: the scope-gate
+    # intent_classified row at workflow entry, then approval_signal,
+    # then the terminal executed row.
+    assert kinds == ["intent_classified", "approval_signal", "executed"]
+    assert [r["phase"] for r in rows] == [
+        "input_validation",
+        "pre_execute",
+        "audit_validation",
+    ]
+    assert rows[0]["payload"]["classification"]["intent"] == "send_invoice"
     assert rows[1]["actor"] == {"user_id": "alice", "auth_method": "demo_cli"}
+    assert rows[2]["actor"] == {"user_id": "alice", "auth_method": "demo_cli"}
 
     invoice = await _fetch_invoice(workflow_id)
     assert invoice is not None
@@ -121,7 +143,7 @@ async def test_declined_records_audit_and_skips_send(
     assert result.invoice_id is None
     rows = await _fetch_audit(workflow_id)
     kinds = [r["event_kind"] for r in rows]
-    assert kinds == ["approval_signal", "declined"]
+    assert kinds == ["intent_classified", "approval_signal", "declined"]
     # never reached execute_send → no row in invoices
     invoice = await _fetch_invoice(workflow_id)
     assert invoice is None
@@ -147,8 +169,8 @@ async def test_approval_timeout_records_audit_and_skips_send(
     assert result.outcome == "timeout"
     assert result.invoice_id is None
     rows = await _fetch_audit(workflow_id)
-    assert [r["event_kind"] for r in rows] == ["declined"]
-    assert rows[0]["payload"] == {"reason": "approval_timeout"}
+    assert [r["event_kind"] for r in rows] == ["intent_classified", "declined"]
+    assert rows[1]["payload"] == {"reason": "approval_timeout"}
 
 
 async def test_duplicate_signal_is_logged_and_ignored(

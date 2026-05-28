@@ -35,9 +35,12 @@ async def test_policy_version_absent_fires(ctx: dict[str, Any]) -> None:
 
 
 async def test_tool_calls_present_skips() -> None:
-    assert await log_data_sources_consulted()(
-        {"tool_calls": [{"tool_name": "list_customers"}]},
-    ) is None
+    assert (
+        await log_data_sources_consulted()(
+            {"tool_calls": [{"tool_name": "list_customers"}]},
+        )
+        is None
+    )
 
 
 @pytest.mark.parametrize(

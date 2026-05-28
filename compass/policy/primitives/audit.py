@@ -12,14 +12,14 @@ from __future__ import annotations
 from typing import Any
 
 from compass.policy.registry import primitive
-from compass.policy.types import Violation
+from compass.policy.types import PolicyContext, Violation
 
 
 @primitive("log_policy_version")
 def log_policy_version():
     """Returns a predicate that fails if context has no non-empty policy_hash."""
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         h = ctx.get("policy_hash")
         if not h:
             return Violation(
@@ -34,10 +34,21 @@ def log_policy_version():
 
 @primitive("log_data_sources_consulted")
 def log_data_sources_consulted():
-    """Returns a predicate that fails when tool_calls is empty/missing."""
+    """Returns a predicate that fails when tool_calls is empty/missing.
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
-        calls = ctx.get("tool_calls") or []
+    Skips when the terminal row's phase is ``input_validation`` — a
+    workflow that short-circuited at the scope gate never reached the
+    main agent and has nothing to consult; flagging it as a defect
+    would be a false positive. The main-agent terminal phases
+    (``audit_validation`` for executed, ``pre_action_proposal`` /
+    ``pre_execute`` for rejected) still apply.
+    """
+
+    def check(ctx: PolicyContext) -> Violation | None:
+        candidate: dict[str, Any] = ctx.get("audit_entry_candidate") or {}
+        if candidate.get("phase") == "input_validation":
+            return None
+        calls: list[Any] = ctx.get("tool_calls") or []
         if not calls:
             return Violation(
                 rule_id="",
