@@ -30,6 +30,11 @@ _PASSTHROUGH_MODULES: tuple[str, ...] = (
     # but it sometimes shows up in sys.modules before the sandbox runs.
     "psycopg",
     "psycopg_pool",
+    # Stage 5: compass.policy and policies.* import psycopg / openai / etc.
+    # transitively. They're activity-only consumers but the modules
+    # appear in sys.modules during worker import.
+    "compass",
+    "policies",
 )
 
 
