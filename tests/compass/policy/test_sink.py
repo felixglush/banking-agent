@@ -15,7 +15,7 @@ from compass.policy.sink import (
 
 
 @pytest.fixture(autouse=True)
-def _clear_global():
+def _clear_global():  # pyright: ignore[reportUnusedFunction]
     clear_sinks()
     yield
     clear_sinks()

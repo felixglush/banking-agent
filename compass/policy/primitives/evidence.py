@@ -9,7 +9,8 @@ Phase: pre_action_proposal.
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, cast
 
 from compass.policy.paths import MISSING, resolve_dotted
 from compass.policy.registry import primitive
@@ -20,7 +21,7 @@ from compass.policy.types import Violation
 def require_evidence_citation(*, field: str):
     """Returns a predicate that fails if any inner list at field is empty."""
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: Mapping[str, Any]) -> Violation | None:
         values = resolve_dotted(ctx, field)
         if values is MISSING:
             return Violation(
@@ -34,7 +35,8 @@ def require_evidence_citation(*, field: str):
                 message=f"{field} resolved to non-list",
                 evidence={"field": field, "reason": "non-list"},
             )
-        empty_indices = [i for i, v in enumerate(values) if not v]
+        typed_values = cast(list[Any], values)
+        empty_indices = [i for i, v in enumerate(typed_values) if not v]
         if empty_indices:
             return Violation(
                 rule_id="",

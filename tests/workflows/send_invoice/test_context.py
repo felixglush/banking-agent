@@ -157,7 +157,7 @@ def test_project_rate_cards_collected() -> None:
 
 
 def test_project_time_entries_collected() -> None:
-    calls = [
+    calls: list[dict[str, Any]] = [
         {
             "tool_name": "list_time_entries",
             "args": {},

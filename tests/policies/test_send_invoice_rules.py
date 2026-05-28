@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -127,7 +128,7 @@ def _mut_rate_card_currency_mismatch(ctx: dict[str, Any]) -> None:
 )
 async def test_pre_action_proposal_block_rule_fires(
     base_ctx: dict[str, Any],
-    mutator,
+    mutator: Callable[[dict[str, Any]], None],
     expected_rule_id: str,
 ) -> None:
     mutator(base_ctx)
@@ -213,7 +214,7 @@ async def test_policy_drift_fires_escalate() -> None:
 # ---------------------------------------------------------------------
 
 
-_AUDIT_HAPPY = {
+_AUDIT_HAPPY: dict[str, Any] = {
     "audit_entry_candidate": {"phase": "audit_validation", "event_kind": "executed", "payload": {}},
     "policy_hash": "abc",
     "tool_calls": [{"tool_name": "list_customers", "args": {}, "result": []}],

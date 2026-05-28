@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any, NoReturn
+
 import pytest
 
 from compass.policy import (
@@ -111,7 +114,7 @@ async def test_declaration_order_preserved() -> None:
 
 
 async def test_predicate_exception_wrapped_as_engine_error() -> None:
-    def raises(_ctx):
+    def raises(_ctx: Mapping[str, Any]) -> NoReturn:
         raise RuntimeError("predicate exploded")
 
     pred = Predicate(primitive_name="bad", params={}, fn=raises)

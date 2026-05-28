@@ -36,7 +36,9 @@ from workflows.send_invoice.workflow import SendInvoiceWorkflow
 
 
 @pytest.fixture(autouse=True)
-def _disable_policy_for_orchestration_tests(monkeypatch: pytest.MonkeyPatch) -> None:
+def _disable_policy_for_orchestration_tests(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Stage-5 policy engine blocks runs where the agent didn't query MCP.
     These tests skip the policy gate to keep their focus on orchestration."""
     monkeypatch.setenv("COMPASS_POLICY_DISABLE", "1")

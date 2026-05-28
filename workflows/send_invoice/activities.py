@@ -71,7 +71,7 @@ class AuditEvent:
     # rules can check log_policy_version.
     policy_hash_for_validation: str | None = None
     # Tool calls + reasoning are passed through for the same reason.
-    tool_calls_for_validation: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls_for_validation: list[dict[str, Any]] = field(default_factory=lambda: [])
     reasoning_text_for_validation: str = ""
 
 

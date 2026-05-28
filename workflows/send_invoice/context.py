@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any
+from typing import Any, cast
 
 
 def extract_tool_calls(run_result: Any) -> list[dict[str, Any]]:
@@ -32,7 +32,7 @@ def extract_tool_calls(run_result: Any) -> list[dict[str, Any]]:
     carries name, args, and result. Calls without a paired output (e.g.
     cancelled) are dropped.
     """
-    items = getattr(run_result, "new_items", None) or []
+    items: list[Any] = getattr(run_result, "new_items", None) or []
     calls: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     for item in items:
@@ -62,7 +62,7 @@ def extract_tool_calls(run_result: Any) -> list[dict[str, Any]]:
 def _attr_or_key(obj: Any, key: str) -> Any:
     """Read either obj.key (dataclass / model) or obj[key] (dict)."""
     if isinstance(obj, dict):
-        return obj.get(key)
+        return cast(dict[str, Any], obj).get(key)
     return getattr(obj, key, None)
 
 
@@ -99,7 +99,7 @@ def project_resolved_entities(tool_calls: list[dict[str, Any]]) -> dict[str, Any
 def extract_reasoning_text(run_result: Any) -> str:
     """Concatenate every assistant message in the run's new_items."""
     parts: list[str] = []
-    items = getattr(run_result, "new_items", None) or []
+    items: list[Any] = getattr(run_result, "new_items", None) or []
     for item in items:
         if getattr(item, "type", None) != "message_output_item":
             continue

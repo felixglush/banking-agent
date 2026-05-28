@@ -10,6 +10,7 @@ Phase: pre_action_proposal.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from compass.policy.paths import MISSING, resolve_dotted
@@ -27,7 +28,7 @@ def entity_status_equals(*, field: str, expected_status: str):
     not the same as "customer.kyc_status is bad".
     """
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: Mapping[str, Any]) -> Violation | None:
         actual = resolve_dotted(ctx, field)
         if actual is MISSING:
             return None

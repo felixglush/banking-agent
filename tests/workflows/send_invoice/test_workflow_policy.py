@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 import psycopg
@@ -50,7 +51,7 @@ def _new_workflow_id() -> str:
 
 
 @pytest.fixture(autouse=True)
-async def _truncate_runtime_tables() -> None:
+async def _truncate_runtime_tables() -> None:  # pyright: ignore[reportUnusedFunction]
     """Wipe runtime tables before each test.
 
     Mirrors tests/workflows/send_invoice/conftest.py — required for
@@ -88,6 +89,7 @@ async def _fetch_snapshot_count(policy_hash: str) -> int:
             (policy_hash,),
         )
         row = await cur.fetchone()
+        assert row is not None
         return row[0]
 
 
@@ -296,7 +298,7 @@ def _mut_rate_card_currency_mismatch(ctx: dict[str, Any]) -> None:
     ],
 )
 async def test_each_pre_action_block_rule_rejects_through_activity(
-    mutator,
+    mutator: Callable[[dict[str, Any]], None],
     expected_rule_id: str,
 ) -> None:
     """Each BLOCK rule, with a context engineered to trip it, must:

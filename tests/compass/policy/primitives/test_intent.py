@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from compass.policy import InMemorySink, Phase, Rule, evaluate, list_primitives
@@ -9,7 +11,7 @@ from compass.policy.primitives.intent import intent_in_allowlist
 from compass.policy.types import Violation
 
 
-def _ctx(intent: str | None) -> dict:
+def _ctx(intent: str | None) -> dict[str, Any]:
     if intent is None:
         return {"workflow_run_id": "wf-test"}
     return {

@@ -9,6 +9,7 @@ Phase: audit_validation.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from compass.policy.registry import primitive
@@ -19,7 +20,7 @@ from compass.policy.types import Violation
 def log_policy_version():
     """Returns a predicate that fails if context has no non-empty policy_hash."""
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: Mapping[str, Any]) -> Violation | None:
         h = ctx.get("policy_hash")
         if not h:
             return Violation(
@@ -44,11 +45,11 @@ def log_data_sources_consulted():
     ``pre_execute`` for rejected) still apply.
     """
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
-        candidate = ctx.get("audit_entry_candidate") or {}
+    def check(ctx: Mapping[str, Any]) -> Violation | None:
+        candidate: dict[str, Any] = ctx.get("audit_entry_candidate") or {}
         if candidate.get("phase") == "input_validation":
             return None
-        calls = ctx.get("tool_calls") or []
+        calls: list[Any] = ctx.get("tool_calls") or []
         if not calls:
             return Violation(
                 rule_id="",

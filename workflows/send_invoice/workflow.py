@@ -33,6 +33,7 @@ docs/superpowers/specs/2026-05-27-stage-6-intent-classifier-design.md:
 """
 
 from datetime import timedelta
+from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -76,7 +77,7 @@ class SendInvoiceWorkflow:
         self._next_seq = 0
         self._proposal_hash: str | None = None
         self._policy_hash: str | None = None
-        self._tool_calls: list[dict] = []
+        self._tool_calls: list[dict[str, Any]] = []
         self._reasoning_text: str = ""
 
     @workflow.signal(name="approve")
