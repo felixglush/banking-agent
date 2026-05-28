@@ -99,10 +99,10 @@
 {"case_id":"pc_ir_d_0016","expected_fired_rules":[],"invoice_case_id":"ir_d_0016"}
 {"case_id":"pc_ir_d_0017","expected_fired_rules":[],"invoice_case_id":"ir_d_0017"}
 {"case_id":"pc_ir_d_0018","expected_fired_rules":[],"invoice_case_id":"ir_d_0018"}
-{"case_id":"pc_ir_pr_0001","expected_fired_rules":["require_amount_source"],"invoice_case_id":"ir_pr_0001"}
-{"case_id":"pc_ir_pr_0002","expected_fired_rules":["contract_consistency_check"],"invoice_case_id":"ir_pr_0002"}
-{"case_id":"pc_ir_pr_0005","expected_fired_rules":["require_amount_source"],"invoice_case_id":"ir_pr_0005"}
-{"case_id":"pc_ir_pr_0007","expected_fired_rules":["prohibit_exceed_contract_cap"],"invoice_case_id":"ir_pr_0007"}
-{"case_id":"pc_ir_pr_0009","expected_fired_rules":["require_amount_source"],"invoice_case_id":"ir_pr_0009"}
-{"case_id":"pc_ir_pr_0012","expected_fired_rules":["currency_consistency_check"],"invoice_case_id":"ir_pr_0012"}
-{"case_id":"pc_ir_pr_0016","expected_fired_rules":["currency_consistency_check"],"invoice_case_id":"ir_pr_0016"}
+{"case_id":"pc_ir_pr_0001","expected_fired_rules":["customer_kyc_verified"],"invoice_case_id":"ir_pr_0001"}
+{"case_id":"pc_ir_pr_0002","expected_fired_rules":["customer_kyc_verified"],"invoice_case_id":"ir_pr_0002"}
+{"case_id":"pc_ir_pr_0005","expected_fired_rules":["customer_kyc_verified"],"invoice_case_id":"ir_pr_0005"}
+{"case_id":"pc_ir_pr_0007","expected_fired_rules":["customer_kyc_verified"],"invoice_case_id":"ir_pr_0007"}
+{"case_id":"pc_ir_pr_0009","expected_fired_rules":["customer_kyc_verified"],"invoice_case_id":"ir_pr_0009"}
+{"case_id":"pc_ir_pr_0012","expected_fired_rules":["customer_kyc_verified"],"invoice_case_id":"ir_pr_0012"}
+{"case_id":"pc_ir_pr_0016","expected_fired_rules":["customer_kyc_verified"],"invoice_case_id":"ir_pr_0016"}

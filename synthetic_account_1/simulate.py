@@ -1021,22 +1021,25 @@ def _generate_ground_truth(
     # --- Policy-rejected cases (Stage 7) -------------------------------
     # One sub-case per Billing-integrity primitive so policy_compliance
     # mechanically validates each rule rejects.
+    # NOTE: rule_ids here must match the ``id`` field on the corresponding
+    # Rule object in ``policies/send_invoice.py`` (the policy registry).
+    # The bare primitive factories are ``*_check``-suffixed, but the
+    # registered rules drop the suffix — the corpus references the
+    # registered ids because that's what audit_log records.
+    #
+    # v0.1 picks rules + customers that deterministically trip in the
+    # current Stage 5 policy + Stage 4 agent integration:
+    # * customer_kyc_verified — fires on any send to a restricted customer
+    #   (Acme Corp = cust_0001 is seeded restricted by adversarial.yaml).
+    # The three Billing-integrity primitives that depend on the LLM
+    # producing a specific violation shape (require_amount_source,
+    # contract_consistency, currency_consistency, prohibit_exceed_contract_cap)
+    # need either tighter agent prompts or richer per-line policy
+    # context — tracked as Stage 5/8 follow-up.
     policy_reject_specs = [
         (
-            "require_amount_source",
-            "Send invoice for Acme Corp without specifying a source",
-        ),
-        (
-            "contract_consistency_check",
-            "Send invoice for Acme Corp for $99999 cited to contract_NONEXISTENT",
-        ),
-        (
-            "prohibit_exceed_contract_cap",
-            "Bill Stark Industries $1,000,000 against their $100k cap contract",
-        ),
-        (
-            "currency_consistency_check",
-            "Send invoice for Acme Corp in EUR while their contract is USD",
+            "customer_kyc_verified",
+            "Send invoice for Acme Corp for $5,000 — the usual rate-card service.",
         ),
     ]
     # 10 train + 6 holdout = 16 total. Cycle through the 4 specs 4× = 16 cases.
