@@ -10,31 +10,53 @@ six questions answered along the way are noted in §Decision log at the end.
 ## Architecture
 
 `compass.eval` is a new submodule of the existing `compass/` package. The
-public API exports four things:
+public API exports the following:
 
-* `WorkflowRunner` protocol — single method, `run_case(case) -> CaseResult`.
-* `TemporalWorkflowRunner` — default implementation that drives workflows via
-  `client.execute_workflow(...)` and sends the approval signal based on
-  `case.expected_outcome`.
-* `run_eval(runner, corpus, mode, suites) -> EvalReport` — top-level entry.
-* `EvalReport` — dataclass holding per-suite aggregates and the path to a
-  Langfuse Dataset Run for trace deep-links.
+**Protocols** (the reusability surface — adopters can swap any of these):
+
+* `WorkflowRunner` — `run_case(case) -> CaseResult`. Drives the workflow under test.
+* `RuleFireSource` — `rule_ids_fired(workflow_run_id) -> set[str]`. Read side of policy compliance assertions.
+* `ScoreSink` — `write_score(run_id, item_id, name, value, comment)`. Per-case score storage.
+* `EvalRunStore` — `allocate_run / link_pair / finalize`. Harness-control state for an eval run.
+
+**Default implementations** (ship with `compass.eval`, used by send-invoice at v0.1):
+
+* `TemporalWorkflowRunner` — `client.execute_workflow(...)` + approval signal based on `case.expected_outcome`.
+* `PostgresAuditLogSource` — SQL query against the `audit_log` table.
+* `LangfuseDatasetScoreSink` — Langfuse Dataset Run score writes.
+* `PostgresEvalRunStore` — writes to the `eval_runs` table.
+
+**Top-level entry:**
+
+* `run_eval(*, runner, corpus, mode, suites, rule_fire_source=PostgresAuditLogSource(), score_sink=LangfuseDatasetScoreSink(), eval_run_store=PostgresEvalRunStore()) -> EvalReport`
+* `EvalReport` — dataclass holding per-suite aggregates and a deep-link to the Langfuse Dataset Run.
+
+Adopters with different runtime stores (different audit schema, non-Langfuse
+score destination, non-Postgres control state) implement the relevant
+protocol and pass it to `run_eval`. The protocols are thin — they name
+behavior the default impls already exhibit — so the v0.1 surface is one
+impl per protocol; v0.2 and external adopters validate the abstraction by
+substituting alternative impls.
 
 ### Layout
 
 ```
 compass/eval/
-  __init__.py             # public exports
-  runner.py               # WorkflowRunner protocol + TemporalWorkflowRunner
+  __init__.py             # public exports (protocols, default impls, run_eval)
+  protocols.py            # WorkflowRunner, RuleFireSource, ScoreSink, EvalRunStore
+  runner.py               # TemporalWorkflowRunner (default WorkflowRunner impl)
+  sources/
+    __init__.py
+    audit_log.py          # PostgresAuditLogSource (default RuleFireSource impl)
+    langfuse_scores.py    # LangfuseDatasetScoreSink (default ScoreSink impl)
+    eval_runs.py          # PostgresEvalRunStore (default EvalRunStore impl)
   suites/
     __init__.py
     functional.py         # field-by-field scoring of result vs expected
-    policy_compliance.py  # audit_log assertion: which rule_ids fired
-    cost_latency.py       # Langfuse passthrough
+    policy_compliance.py  # consumes RuleFireSource; asserts rule_ids fired
+    cost_latency.py       # Langfuse passthrough (token/latency aggregates)
   corpus.py               # JSONL loader; mode gate; holdout chroot enforcement
-  langfuse_io.py          # Dataset Run create/update; score writes
   budget.py               # pre-flight cost estimate from Langfuse history
-  storage.py              # eval_runs row create/update under SERIALIZABLE
   cli.py                  # `uv run python -m compass.eval ...`
 
 evals/
@@ -74,15 +96,29 @@ landed alongside this spec).
 
 ### Why this shape
 
-`compass.eval` is **mostly** runtime-agnostic — the `WorkflowRunner` protocol
-lets a future non-Temporal runner plug in without touching the suites. It is
-**not fully** trace-source-agnostic: `policy_compliance` reads `audit_log`
-directly, which couples the suite to the runtime DB schema. This is an
-intentional v0.1 trade-off. The build plan explicitly endorses it ("queries
-the per-test trace in Langfuse, or equivalently the audit_log rows"); the
-synchronous `audit_log` write means no waiting for async trace ingestion;
-and the alternative (a parallel OTel sink in the policy engine) doubles the
-source-of-truth surface for one suite's benefit.
+`compass.eval` is fully runtime-store-agnostic via four protocols
+(`WorkflowRunner`, `RuleFireSource`, `ScoreSink`, `EvalRunStore`). Suites and
+`run_eval` consume the protocols; default implementations live in
+`compass.eval.sources` and `compass.eval.runner` and represent the v0.1
+choices (Temporal, Postgres `audit_log`, Langfuse Datasets, Postgres
+`eval_runs`).
+
+The default `PostgresAuditLogSource` is the v0.1 implementation of
+`RuleFireSource`. It queries `audit_log` for rows where `event_kind =
+'rule_fired'`, synchronous and deterministic — no waiting for async trace
+ingestion. Alternative implementations (e.g. `LangfuseTraceSource` that
+reads OTel events, or a custom impl over a non-Postgres store) are
+straightforward to add: implement the one-method protocol and pass it to
+`run_eval`. The build plan explicitly endorses the audit-log read path
+("queries the per-test trace in Langfuse, or equivalently the audit_log
+rows"); the protocol just makes the choice swappable.
+
+The other three protocols (`WorkflowRunner`, `ScoreSink`, `EvalRunStore`)
+follow the same pattern: a thin Protocol naming the behavior the default
+impl already exhibits. The result at v0.1 is one impl per protocol; v0.2
+(dispute workflow) is the first reuse test, and external adopters validate
+the abstraction by substituting alternative impls. Stage 21 reports the
+list of public-API gaps surfaced and how each was closed.
 
 ## Data model
 
@@ -246,10 +282,10 @@ non-zero band can be added without code change.
 ### Suite 2 — `policy_compliance`
 
 **Inputs.** `case.expected_fired_rules` from
-`policy_compliance_labels.jsonl` joined by `invoice_case_id`; the
-`rule_fired` rows from `audit_log` keyed on `workflow_run_id`.
+`policy_compliance_labels.jsonl` joined by `invoice_case_id`; the set
+returned by the injected `RuleFireSource.rule_ids_fired(workflow_run_id)`.
 
-**Query.**
+**Default source.** `PostgresAuditLogSource` runs:
 
 ```sql
 SELECT rule_id
@@ -258,13 +294,17 @@ SELECT rule_id
    AND event_kind = 'rule_fired';
 ```
 
+and returns the set. Synchronous — `audit_log` rows are committed before
+the workflow returns, so no polling or async-ingestion failure mode.
+
 **Scoring.** Set-equality: `observed == expected`. Failure detail records
 `missing = expected - observed` and `extra = observed - expected`
 separately.
 
-Reading from `audit_log` (rather than the Langfuse trace) keeps the
-assertion synchronous — `audit_log` rows are committed before the workflow
-returns. No polling, no async-ingestion failure mode.
+The suite consumes the protocol, not the SQL — an adopter with a different
+audit store (Langfuse trace events, S3 audit JSON, a different table
+shape) provides their own `RuleFireSource` impl and the suite is
+unchanged.
 
 ### Suite 3 — `cost_latency`
 
@@ -421,7 +461,7 @@ each run costs ~$0.10 and depends on external services.
 
 ## Decision log
 
-The brainstorm produced six binding choices:
+The brainstorm produced seven binding choices:
 
 1. **Score store:** Langfuse Dataset Runs (per build plan); Postgres holds only `eval_runs` control state.
 2. **Approval mechanism:** per-case `expected_outcome` in ground truth drives the runner's signal.
@@ -429,3 +469,4 @@ The brainstorm produced six binding choices:
 4. **Ablation schema:** `paired_run_id` (self-FK) + `policy_enabled` columns on `eval_runs`.
 5. **Trace-assertion source:** `audit_log` (corrected from Langfuse trace events after spec walkthrough surfaced the async-ingestion cost; build plan §4 explicitly endorses the audit_log path).
 6. **Spec scope:** Stage 7 only; Stages 8 and 9 decide their own directory layout when written.
+7. **Reusability surface:** four protocols (`WorkflowRunner`, `RuleFireSource`, `ScoreSink`, `EvalRunStore`) with default impls (`TemporalWorkflowRunner`, `PostgresAuditLogSource`, `LangfuseDatasetScoreSink`, `PostgresEvalRunStore`) ship at v0.1. Adopters with different runtime stores substitute impls without forking the suite code.
