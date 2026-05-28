@@ -236,11 +236,14 @@ ALTER TABLE eval_runs
   ADD COLUMN IF NOT EXISTS suite_names    TEXT[] NOT NULL DEFAULT '{}',
   ADD COLUMN IF NOT EXISTS host_git_dirty BOOLEAN NOT NULL DEFAULT FALSE;
 
+-- UNIQUE constraints create an underlying index; re-running raises
+-- ``duplicate_table`` for the index even when ``duplicate_object`` would
+-- catch the constraint itself. Catch both.
 DO $$ BEGIN
   ALTER TABLE eval_runs
     ADD CONSTRAINT eval_runs_holdout_counter_unique
       UNIQUE (git_sha, commit_holdout_run_no);
-EXCEPTION WHEN duplicate_object THEN END $$;
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN END $$;
 
 DO $$ BEGIN
   ALTER TABLE eval_runs
