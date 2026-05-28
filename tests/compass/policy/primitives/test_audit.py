@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from typing import Any
+
+import pytest
+
 from compass.policy.primitives.audit import (
     log_data_sources_consulted,
     log_policy_version,
@@ -11,39 +15,38 @@ from compass.policy.primitives.audit import (
 
 
 async def test_policy_version_present_skips() -> None:
-    pred = log_policy_version()
-    assert await pred({"policy_hash": "abc123"}) is None
+    assert await log_policy_version()({"policy_hash": "abc123"}) is None
 
 
-async def test_policy_version_missing_fires() -> None:
-    pred = log_policy_version()
-    v = await pred({})
+@pytest.mark.parametrize(
+    "ctx",
+    [
+        pytest.param({}, id="missing"),
+        pytest.param({"policy_hash": ""}, id="empty"),
+    ],
+)
+async def test_policy_version_absent_fires(ctx: dict[str, Any]) -> None:
+    v = await log_policy_version()(ctx)
     assert v is not None
     assert "policy_hash" in v.message
-
-
-async def test_policy_version_empty_fires() -> None:
-    pred = log_policy_version()
-    v = await pred({"policy_hash": ""})
-    assert v is not None
 
 
 # ---- log_data_sources_consulted ----
 
 
 async def test_tool_calls_present_skips() -> None:
-    pred = log_data_sources_consulted()
-    ctx = {"tool_calls": [{"tool_name": "list_customers"}]}
-    assert await pred(ctx) is None
+    assert await log_data_sources_consulted()(
+        {"tool_calls": [{"tool_name": "list_customers"}]},
+    ) is None
 
 
-async def test_tool_calls_empty_fires() -> None:
-    pred = log_data_sources_consulted()
-    v = await pred({"tool_calls": []})
-    assert v is not None
-
-
-async def test_tool_calls_missing_fires() -> None:
-    pred = log_data_sources_consulted()
-    v = await pred({})
+@pytest.mark.parametrize(
+    "ctx",
+    [
+        pytest.param({"tool_calls": []}, id="empty"),
+        pytest.param({}, id="missing"),
+    ],
+)
+async def test_tool_calls_absent_fires(ctx: dict[str, Any]) -> None:
+    v = await log_data_sources_consulted()(ctx)
     assert v is not None
