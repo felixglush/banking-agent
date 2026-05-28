@@ -1,8 +1,14 @@
 """Cost / latency passthrough suite. Always scores 1.0 — the comment
 carries the numbers. Optional warning thresholds in run_config.yaml
-trigger warning lines in the run summary; never pass/fail."""
+trigger warning lines in the run summary; never pass/fail.
 
-from typing import Any
+Trace lookup: the workflow's worker tags every Langfuse trace with
+``wf:<workflow_run_id>`` (see workflows.send_invoice.activities.
+_enrich_langfuse_trace). The suite searches by that tag, picks the
+most recent match, then reads its aggregates.
+"""
+
+from typing import Any, cast
 
 from compass.eval.suites.functional import SuiteScore
 from compass.eval.types import Case, CaseResult
@@ -15,21 +21,26 @@ async def score_cost_latency(
     langfuse_client: Any,
 ) -> SuiteScore:
     try:
-        trace = langfuse_client.api.trace.get(result.workflow_run_id)
+        traces = langfuse_client.api.trace.list(
+            tags=[f"wf:{result.workflow_run_id}"],
+            limit=1,
+        )
     except Exception:
         return SuiteScore(passed=True, comment="trace_not_ingested")
 
-    cost = getattr(trace, "total_cost", None)
-    p50 = getattr(trace, "latency_ms_p50", None)
-    p95 = getattr(trace, "latency_ms_p95", None)
-    tokens = getattr(trace, "total_tokens", None)
+    matches = cast(list[Any], getattr(traces, "data", None) or [])
+    if not matches:
+        return SuiteScore(passed=True, comment="trace_not_ingested")
+
+    trace: Any = matches[0]
+    cost = cast(float | None, getattr(trace, "total_cost", None))
+    latency_s = cast(float | None, getattr(trace, "latency", None))
+    tokens = cast(int | None, getattr(trace, "total_tokens", None))
     parts: list[str] = []
     if cost is not None:
         parts.append(f"cost_usd={cost:.4f}")
     if tokens is not None:
         parts.append(f"tokens={tokens}")
-    if p50 is not None:
-        parts.append(f"p50_ms={p50}")
-    if p95 is not None:
-        parts.append(f"p95_ms={p95}")
+    if latency_s is not None:
+        parts.append(f"latency_ms={int(latency_s * 1000)}")
     return SuiteScore(passed=True, comment=";".join(parts) or "no_metrics_available")

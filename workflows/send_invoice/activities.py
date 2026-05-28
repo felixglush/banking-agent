@@ -61,23 +61,25 @@ def _enrich_langfuse_trace(event: "AuditEvent") -> None:
     Silent no-op if no active span (Langfuse not configured).
 
     Trace attributes set:
+    * Always: tags include ``wf:<workflow_run_id>`` so compass.eval can
+      look up a workflow's trace from its Temporal workflow_id.
     * ``intent_classified`` event: trace_name=send_invoice:<intent>,
-      tags=[send_invoice, <intent>].
+      tags also include ``send_invoice`` and the intent.
     * ``approval_signal`` / ``executed`` / ``declined`` events: user.id
       from actor; trace_output for terminal events.
     """
     span = otel_trace.get_current_span()
     if not span.is_recording():
         return
+    tags: list[str] = [f"wf:{event.workflow_run_id}"]
     if event.event_kind == "intent_classified":
         classification = cast(dict[str, Any] | None, event.payload.get("classification"))
         if classification is not None:
             intent = cast(str | None, classification.get("intent"))
             if intent is not None:
                 span.set_attribute(LangfuseOtelSpanAttributes.TRACE_NAME, f"send_invoice:{intent}")
-                span.set_attribute(
-                    LangfuseOtelSpanAttributes.TRACE_TAGS, json.dumps(["send_invoice", intent])
-                )
+                tags.extend(["send_invoice", intent])
+    span.set_attribute(LangfuseOtelSpanAttributes.TRACE_TAGS, json.dumps(tags))
     if event.actor is not None:
         user_id = cast(str | None, event.actor.get("user_id"))
         if user_id is not None:
