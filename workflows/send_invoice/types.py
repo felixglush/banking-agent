@@ -87,7 +87,7 @@ class PolicyDecisionPayload(BaseModel):
     next_sequence_no: int
 
 
-WorkflowOutcome = Literal["sent", "policy_rejected", "declined", "timeout"]
+WorkflowOutcome = Literal["sent", "policy_rejected", "declined", "timeout", "unsupported"]
 
 
 class WorkflowResult(BaseModel):

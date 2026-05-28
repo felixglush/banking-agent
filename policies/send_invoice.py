@@ -8,10 +8,11 @@ Rule ids are stable identifiers — they appear in audit_log.rule_id
 and in historic queries. Renaming an in-use id breaks audit reads;
 treat ids as append-only.
 
-Twelve rules total: eight framework-core primitives plus four
-app-specific Billing integrity primitives. Every Billing integrity
-rule carries ``must_be_covered=True`` so Stage 10's CI gate catches
-dead-code regressions in that family.
+Thirteen rules total: nine framework-core primitives (including the
+Stage-6 scope-gate ``intent_in_allowlist``) plus four app-specific
+Billing integrity primitives. Every Billing integrity rule and the
+scope-gate rule carry ``must_be_covered=True`` so Stage 10's CI gate
+catches dead-code regressions in those families.
 """
 
 from compass.policy import Phase, Rule, Severity
@@ -25,6 +26,7 @@ from compass.policy.primitives.audit import (
 )
 from compass.policy.primitives.evidence import require_evidence_citation
 from compass.policy.primitives.identity import entity_status_equals
+from compass.policy.primitives.intent import intent_in_allowlist
 from compass.policy.primitives.resolution import require_existing_entity
 from compass.policy.primitives.value import numeric_threshold
 
@@ -39,12 +41,25 @@ from workflows.send_invoice.primitives import (
 )
 
 RULES: list[Rule] = [
+    # ---- input_validation — scope gate ----
+    Rule(
+        id="intent_must_be_send_invoice",
+        phase=Phase.input_validation,
+        predicate=intent_in_allowlist(
+            field="classification.intent",
+            allowed=frozenset({"send_invoice"}),
+        ),
+        regulatory_basis=("internal SOP-SCOPE-01",),
+        tags=("scope_gate",),
+        must_be_covered=True,
+    ),
     # ---- pre_action_proposal — bulk of policy load ----
     Rule(
         id="customer_must_exist",
         phase=Phase.pre_action_proposal,
         predicate=require_existing_entity(
-            field="resolved_entities.customer", entity_type="customer",
+            field="resolved_entities.customer",
+            entity_type="customer",
         ),
         regulatory_basis=("internal SOP-CUST-01",),
         tags=("resolution",),
@@ -111,7 +126,6 @@ RULES: list[Rule] = [
         tags=("billing_integrity",),
         must_be_covered=True,
     ),
-
     # ---- pre_execute — drift detection ----
     Rule(
         id="no_silent_modification_after_confirmation",
@@ -128,7 +142,6 @@ RULES: list[Rule] = [
         regulatory_basis=("internal SOP-CTRL-02",),
         tags=("integrity",),
     ),
-
     # ---- audit_validation — terminal-row completeness ----
     Rule(
         id="audit_has_policy_version",

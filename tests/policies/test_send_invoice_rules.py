@@ -9,6 +9,44 @@ import pytest
 from compass.policy import Phase, evaluate
 from compass.policy.sink import InMemorySink
 from policies.send_invoice import RULES
+from tests.policies.conftest import (
+    happy_input_validation_ctx,
+    out_of_scope_input_validation_ctx,
+)
+
+# ---------------------------------------------------------------------
+# input_validation phase
+# ---------------------------------------------------------------------
+
+
+async def test_input_validation_permits_send_invoice() -> None:
+    sink = InMemorySink()
+    decision = await evaluate(
+        RULES,
+        Phase.input_validation,
+        happy_input_validation_ctx(),
+        sink=sink,
+    )
+    assert decision.permit is True
+    assert decision.rule_ids_fired == ()
+    skipped = {e["rule_id"] for e in sink.events if e["event_kind"] == "rule_skipped"}
+    assert skipped == {"intent_must_be_send_invoice"}
+
+
+async def test_input_validation_blocks_out_of_scope() -> None:
+    sink = InMemorySink()
+    decision = await evaluate(
+        RULES,
+        Phase.input_validation,
+        out_of_scope_input_validation_ctx(),
+        sink=sink,
+    )
+    assert decision.permit is False
+    assert decision.rule_ids_fired == ("intent_must_be_send_invoice",)
+    fired = [e for e in sink.events if e["event_kind"] == "rule_fired"]
+    assert len(fired) == 1
+    assert fired[0]["rule_id"] == "intent_must_be_send_invoice"
+    assert fired[0]["evidence"]["value"] == "out_of_scope"
 
 
 # ---------------------------------------------------------------------
@@ -21,16 +59,23 @@ async def test_happy_proposal_permits_all_pre_action_proposal_rules(
 ) -> None:
     sink = InMemorySink()
     decision = await evaluate(
-        RULES, Phase.pre_action_proposal, base_ctx, sink=sink,
+        RULES,
+        Phase.pre_action_proposal,
+        base_ctx,
+        sink=sink,
     )
     assert decision.permit is True
     assert decision.rule_ids_fired == ()
     assert [e for e in sink.events if e["event_kind"] == "rule_fired"] == []
     skipped = {e["rule_id"] for e in sink.events if e["event_kind"] == "rule_skipped"}
     assert skipped == {
-        "customer_must_exist", "customer_kyc_verified", "invoice_amount_cap",
-        "require_amount_source", "require_evidence_citation",
-        "contract_consistency", "prohibit_exceed_contract_cap",
+        "customer_must_exist",
+        "customer_kyc_verified",
+        "invoice_amount_cap",
+        "require_amount_source",
+        "require_evidence_citation",
+        "contract_consistency",
+        "prohibit_exceed_contract_cap",
         "currency_consistency",
     }
 
@@ -81,11 +126,16 @@ def _mut_rate_card_currency_mismatch(ctx: dict[str, Any]) -> None:
     ],
 )
 async def test_pre_action_proposal_block_rule_fires(
-    base_ctx: dict[str, Any], mutator, expected_rule_id: str,
+    base_ctx: dict[str, Any],
+    mutator,
+    expected_rule_id: str,
 ) -> None:
     mutator(base_ctx)
     decision = await evaluate(
-        RULES, Phase.pre_action_proposal, base_ctx, sink=InMemorySink(),
+        RULES,
+        Phase.pre_action_proposal,
+        base_ctx,
+        sink=InMemorySink(),
     )
     assert decision.permit is False
     assert expected_rule_id in decision.rule_ids_fired
@@ -98,7 +148,10 @@ async def test_amount_above_cap_escalates_but_permits(
     stays True because no BLOCK fired."""
     base_ctx["proposal"]["total_cents"] = 15_000_000  # > $100k cap
     decision = await evaluate(
-        RULES, Phase.pre_action_proposal, base_ctx, sink=InMemorySink(),
+        RULES,
+        Phase.pre_action_proposal,
+        base_ctx,
+        sink=InMemorySink(),
     )
     assert decision.permit is True
     assert "invoice_amount_cap" in decision.rule_ids_fired
@@ -120,7 +173,10 @@ _PRE_EXEC_HAPPY = {
 
 async def test_pre_execute_happy_path_permits() -> None:
     decision = await evaluate(
-        RULES, Phase.pre_execute, dict(_PRE_EXEC_HAPPY), sink=InMemorySink(),
+        RULES,
+        Phase.pre_execute,
+        dict(_PRE_EXEC_HAPPY),
+        sink=InMemorySink(),
     )
     assert decision.permit is True
     assert decision.rule_ids_fired == ()
@@ -129,7 +185,10 @@ async def test_pre_execute_happy_path_permits() -> None:
 async def test_silent_modification_fires_block() -> None:
     ctx = {**_PRE_EXEC_HAPPY, "current_proposal_hash": "h2"}
     decision = await evaluate(
-        RULES, Phase.pre_execute, ctx, sink=InMemorySink(),
+        RULES,
+        Phase.pre_execute,
+        ctx,
+        sink=InMemorySink(),
     )
     assert decision.permit is False
     assert "no_silent_modification_after_confirmation" in decision.rule_ids_fired
@@ -138,7 +197,10 @@ async def test_silent_modification_fires_block() -> None:
 async def test_policy_drift_fires_escalate() -> None:
     ctx = {**_PRE_EXEC_HAPPY, "current_policy_hash": "p2"}
     decision = await evaluate(
-        RULES, Phase.pre_execute, ctx, sink=InMemorySink(),
+        RULES,
+        Phase.pre_execute,
+        ctx,
+        sink=InMemorySink(),
     )
     # ESCALATE does not flip permit.
     assert decision.permit is True
@@ -152,8 +214,7 @@ async def test_policy_drift_fires_escalate() -> None:
 
 
 _AUDIT_HAPPY = {
-    "audit_entry_candidate": {"phase": "audit_validation",
-                              "event_kind": "executed", "payload": {}},
+    "audit_entry_candidate": {"phase": "audit_validation", "event_kind": "executed", "payload": {}},
     "policy_hash": "abc",
     "tool_calls": [{"tool_name": "list_customers", "args": {}, "result": []}],
     "reasoning_text": "ok",
@@ -162,7 +223,10 @@ _AUDIT_HAPPY = {
 
 async def test_audit_validation_skips_complete_candidate() -> None:
     decision = await evaluate(
-        RULES, Phase.audit_validation, dict(_AUDIT_HAPPY), sink=InMemorySink(),
+        RULES,
+        Phase.audit_validation,
+        dict(_AUDIT_HAPPY),
+        sink=InMemorySink(),
     )
     assert decision.permit is True
 
@@ -175,11 +239,15 @@ async def test_audit_validation_skips_complete_candidate() -> None:
     ],
 )
 async def test_audit_validation_block_rule_fires(
-    override: dict[str, Any], expected_rule_id: str,
+    override: dict[str, Any],
+    expected_rule_id: str,
 ) -> None:
     ctx = {**_AUDIT_HAPPY, **override}
     decision = await evaluate(
-        RULES, Phase.audit_validation, ctx, sink=InMemorySink(),
+        RULES,
+        Phase.audit_validation,
+        ctx,
+        sink=InMemorySink(),
     )
     assert decision.permit is False
     assert expected_rule_id in decision.rule_ids_fired

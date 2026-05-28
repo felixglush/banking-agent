@@ -34,9 +34,20 @@ def log_policy_version():
 
 @primitive("log_data_sources_consulted")
 def log_data_sources_consulted():
-    """Returns a predicate that fails when tool_calls is empty/missing."""
+    """Returns a predicate that fails when tool_calls is empty/missing.
+
+    Skips when the terminal row's phase is ``input_validation`` — a
+    workflow that short-circuited at the scope gate never reached the
+    main agent and has nothing to consult; flagging it as a defect
+    would be a false positive. The main-agent terminal phases
+    (``audit_validation`` for executed, ``pre_action_proposal`` /
+    ``pre_execute`` for rejected) still apply.
+    """
 
     def check(ctx: dict[str, Any]) -> Violation | None:
+        candidate = ctx.get("audit_entry_candidate") or {}
+        if candidate.get("phase") == "input_validation":
+            return None
         calls = ctx.get("tool_calls") or []
         if not calls:
             return Violation(

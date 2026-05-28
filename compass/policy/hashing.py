@@ -52,9 +52,16 @@ def hash_rules(rules: Sequence[Rule]) -> str:
 
 
 def _sort_recursive(value: Any) -> Any:
-    """Sort dict keys at every level so param order doesn't affect the hash."""
+    """Sort dict keys at every level so param order doesn't affect the hash.
+
+    frozenset/set become sorted lists so set-typed primitive params
+    (e.g. ``intent_in_allowlist(allowed=frozenset({...}))``) serialize
+    deterministically across runs.
+    """
     if isinstance(value, Mapping):
         return {k: _sort_recursive(value[k]) for k in sorted(value)}
+    if isinstance(value, frozenset | set):
+        return sorted(_sort_recursive(v) for v in value)
     if isinstance(value, list | tuple):
         return [_sort_recursive(v) for v in value]
     return value

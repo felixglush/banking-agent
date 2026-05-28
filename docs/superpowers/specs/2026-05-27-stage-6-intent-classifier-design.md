@@ -399,12 +399,19 @@ Notes:
      terminated at `input_validation` (visible via `phase` on the
      candidate row).
 
-  **Decision: (3).** The cleanest fix: the predicate already reads
-  `ctx["audit_entry_candidate"]["phase"]`; add a short-circuit at
-  the top that returns `None` when phase is `input_validation`. The
-  intent is "log the data sources the agent consulted"; if the
-  workflow never reached the agent, there's nothing to log and the
-  rule is not meaningful. Documented in `audit.py` docstring update.
+  **Decision (revised during implementation): (1).** Match the
+  existing precedent set at Stage 5 — `policy_rejected`, `declined`,
+  and `timeout` terminal rows do *not* set `is_terminal_event=True`.
+  Only the `executed` (success) path runs audit_validation as a
+  defect detector. Unsupported short-circuits join that pattern: the
+  audit row is written, the workflow ends, and audit_validation
+  rules don't fire on it. Avoids false-positive defect signals from
+  `log_policy_version` (which would fire because no main-loop
+  `policy_hash` is threaded back through the failed activity). The
+  `log_data_sources_consulted` defensive short-circuit on
+  `input_validation` candidate phase is kept as a safety net for any
+  future caller that does set `is_terminal_event=True` on an
+  input_validation row.
 
 - **`self._policy_hash` is set after the input_validation gate.** If
   input_validation permits and pre_action_proposal then runs, it
@@ -636,9 +643,25 @@ def _scope_then_proposal_model(
 
 | Test | Classifier output | Proposal output | Expected outcome | Audit assertions |
 |---|---|---|---|---|
-| `test_in_scope_routes_to_main_agent` | `{intent: "send_invoice", confidence: 0.98, rationale: ...}` | happy proposal | `sent` | audit_log contains `event_kind="intent_classified"` row at phase=input_validation; followed by the existing pre_action_proposal / pre_execute / executed sequence |
 | `test_out_of_scope_short_circuits` | `{intent: "out_of_scope", confidence: 0.99, rationale: ...}` | (not reached) | `unsupported` | audit_log contains rule_fired row for `intent_must_be_send_invoice` and a terminal `event_kind="unsupported"` row carrying the original message + classification payload; no pre_action_proposal rows |
-| `test_no_classifier_output_falls_through_to_unsupported` | `TestModel` returns malformed JSON (so `final_output` is None) | (not reached) | `unsupported` | audit_log contains `event_kind="agent_no_output"` row at phase=input_validation |
+
+The in-scope happy-path workflow test is intentionally NOT in this
+file. With policy live, an in-process `TestModel` path would block at
+`pre_action_proposal` (the TestModel never calls MCP so
+`resolved_entities.customer` is missing and `customer_must_exist`
+fires). The orchestration shape is verified by `test_workflow.py`
+(with policy disabled via `COMPASS_POLICY_DISABLE=1`, where the
+audit log shows the new `intent_classified` row sequence); the
+input_validation gate's `permit` path is verified directly at
+activity level by `test_workflow_policy.py`.
+
+The `test_no_classifier_output_falls_through_to_unsupported` case
+is deferred: forcing `TestModel` to produce a non-parseable response
+requires bypassing the Agents SDK's structured-output retry loop
+(the SDK re-prompts on malformed output), which is its own piece of
+scaffolding. The `agent_no_output` branch in `workflow.py` is
+straightforward enough that the production path's manual smoke
+covers it.
 
 The fixture uses `COMPASS_POLICY_DISABLE` ONLY for the
 `pre_action_proposal` phase via the rule-set, not as an env-var
