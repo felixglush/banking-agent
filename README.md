@@ -1,8 +1,18 @@
-# Compass
+# Overview
 
 A reusable evaluation and policy framework for agentic financial workflows.
 See [docs/build-plan.md](./docs/build-plan.md) for the full thesis, scope,
 architecture, and stage-by-stage build plan.
+
+These are some policy examples provided by the package. Clients can extend with their own policies to enforce custom behavior.
+- Hallucination — agent invoices a customer that doesn't exist.
+- Regulatory compliance — billing customers whose KYC isn't done.
+- Authorization thresholds — large invoices need a human eye, not just an approval click.
+- Provenance / fabrication — every dollar billed must trace to evidence.
+- Contract violations — the invoice contradicts the customer's contract.
+- Time-of-check vs time-of-use — the world changed between human approval and execution.
+- Audit completeness — the trail itself must be defensible.
+
 
 ## Setup
 
