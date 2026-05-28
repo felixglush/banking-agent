@@ -189,6 +189,140 @@ async def test_amount_above_cap_escalates_but_permits() -> None:
 
 
 # ---------------------------------------------------------------------
+# Every BLOCK rule, end-to-end: violating context → ApplicationError +
+# rule_fired row carrying decision='block'. Parametrized so a new rule
+# added to RULES gets its own row by appending one tuple.
+# ---------------------------------------------------------------------
+
+
+def _mut_no_customer(ctx: dict[str, Any]) -> None:
+    ctx["resolved_entities"]["customer"] = None
+
+
+def _mut_pending_kyc(ctx: dict[str, Any]) -> None:
+    ctx["resolved_entities"]["customer"]["kyc_status"] = "pending"
+
+
+def _mut_invalid_source_type(ctx: dict[str, Any]) -> None:
+    ctx["proposal"]["line_items"][0]["source_type"] = "made_up"
+
+
+def _mut_empty_source_refs(ctx: dict[str, Any]) -> None:
+    ctx["proposal"]["line_items"][0]["source_refs"] = []
+
+
+def _mut_currency_mismatch(ctx: dict[str, Any]) -> None:
+    ctx["proposal"]["currency"] = "EUR"  # contract is USD
+
+
+def _mut_exceed_cap(ctx: dict[str, Any]) -> None:
+    ctx["resolved_entities"]["contract"]["monthly_hour_cap"] = 1  # line is 2h
+
+
+def _mut_rate_card_currency_mismatch(ctx: dict[str, Any]) -> None:
+    ctx["resolved_entities"]["rate_card_entries"] = [
+        {"id": "rc_eur", "currency": "EUR"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "mutator,expected_rule_id",
+    [
+        (_mut_no_customer, "customer_must_exist"),
+        (_mut_pending_kyc, "customer_kyc_verified"),
+        (_mut_invalid_source_type, "require_amount_source"),
+        (_mut_empty_source_refs, "require_evidence_citation"),
+        (_mut_currency_mismatch, "contract_consistency"),
+        (_mut_exceed_cap, "prohibit_exceed_contract_cap"),
+        (_mut_rate_card_currency_mismatch, "currency_consistency"),
+    ],
+)
+async def test_each_pre_action_block_rule_rejects_through_activity(
+    mutator,
+    expected_rule_id: str,
+) -> None:
+    """Each BLOCK rule, with a context engineered to trip it, must:
+    (1) raise ApplicationError of type PolicyDecisionError from the activity,
+    (2) write a rule_fired row carrying decision='block' and the rule id,
+    (3) carry a non-stub policy_hash on every emitted row.
+    """
+    run_id = _new_workflow_id()
+    ctx = happy_pre_action_proposal_ctx()
+    mutator(ctx)
+
+    with pytest.raises(ApplicationError) as exc:
+        await evaluate_policy(EvaluatePolicyInput(
+            workflow_run_id=run_id,
+            starting_sequence_no=1,
+            phase=Phase.pre_action_proposal.value,
+            context=ctx,
+        ))
+    assert exc.value.type == "PolicyDecisionError"
+    assert exc.value.non_retryable is True
+
+    rows = await _fetch_audit(run_id)
+    fired = [r for r in rows if r["event_kind"] == "rule_fired"]
+    assert any(
+        r["rule_id"] == expected_rule_id and r["decision"] == "block"
+        for r in fired
+    ), f"expected rule_fired/block for {expected_rule_id}, got {fired}"
+    # Every emitted row carries the real policy_hash, not a sentinel.
+    assert all(
+        r["policy_hash"] not in {"unknown", "stage-4-stub", "disabled-for-eval"}
+        for r in rows
+    )
+
+
+# ---------------------------------------------------------------------
+# audit_validation rules: BLOCKs at this phase do NOT raise; they
+# write rule_fired rows so the defect is visible in the audit trail
+# but the terminal row still lands. Confirm both behaviors.
+# ---------------------------------------------------------------------
+
+
+async def test_audit_validation_missing_policy_hash_emits_rule_fired() -> None:
+    """audit_has_policy_version fires when terminal-row policy_hash is empty.
+    Activity does not raise — defect surfaces in audit_log only."""
+    from workflows.send_invoice.activities import AuditEvent, audit_log
+    run_id = _new_workflow_id()
+    await audit_log(AuditEvent(
+        workflow_run_id=run_id,
+        sequence_no=1,
+        phase="audit_validation",
+        event_kind="executed",
+        payload={"invoice_id": "inv-x", "total_cents": 80000},
+        decision="permit",
+        is_terminal_event=True,
+        policy_hash_for_validation="",          # ← empty
+        tool_calls_for_validation=[{"tool_name": "list_customers"}],
+    ))
+    rows = await _fetch_audit(run_id)
+    fired = {r["rule_id"] for r in rows if r["event_kind"] == "rule_fired"}
+    assert "audit_has_policy_version" in fired
+    assert any(r["event_kind"] == "executed" for r in rows)
+
+
+async def test_audit_validation_empty_tool_calls_emits_rule_fired() -> None:
+    """audit_has_data_sources fires when the agent consulted no tools."""
+    from workflows.send_invoice.activities import AuditEvent, audit_log
+    run_id = _new_workflow_id()
+    await audit_log(AuditEvent(
+        workflow_run_id=run_id,
+        sequence_no=1,
+        phase="audit_validation",
+        event_kind="executed",
+        payload={"invoice_id": "inv-x", "total_cents": 80000},
+        decision="permit",
+        is_terminal_event=True,
+        policy_hash_for_validation="abc123",
+        tool_calls_for_validation=[],            # ← empty
+    ))
+    rows = await _fetch_audit(run_id)
+    fired = {r["rule_id"] for r in rows if r["event_kind"] == "rule_fired"}
+    assert "audit_has_data_sources" in fired
+
+
+# ---------------------------------------------------------------------
 # pre_execute phase
 # ---------------------------------------------------------------------
 
