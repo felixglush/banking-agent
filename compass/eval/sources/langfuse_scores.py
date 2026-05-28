@@ -1,5 +1,10 @@
-"""Default ScoreSink impl: writes per-case suite scores as Langfuse
-Dataset Run scores."""
+"""Default ScoreSink impl: writes per-case suite scores to Langfuse.
+
+The Langfuse v4 SDK requires every score to anchor to one of
+trace_id / observation_id / session_id / dataset_run_id. v0.1 uses
+``session_id = compass-eval run_id`` so all scores from one harness
+invocation group together under a Langfuse Session, with the case_id
+and dataset name carried in score metadata for cross-reference."""
 
 from typing import Any
 
@@ -22,6 +27,10 @@ class LangfuseDatasetScoreSink:
             name=name,
             value=value,
             comment=comment,
-            dataset_run_name=run_id,
-            data_set_item_id=item_id,
+            session_id=run_id,
+            metadata={
+                "compass_eval_run_id": run_id,
+                "case_id": item_id,
+                "dataset": self._dataset_name,
+            },
         )

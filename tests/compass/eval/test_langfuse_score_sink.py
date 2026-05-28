@@ -21,4 +21,6 @@ async def test_write_score_calls_create_score():
     kwargs = mock_client.create_score.call_args.kwargs
     assert kwargs["name"] == "functional"
     assert kwargs["value"] == 1.0
-    assert kwargs["dataset_run_name"] == "ev_abc"
+    assert kwargs["session_id"] == "ev_abc"
+    assert kwargs["metadata"]["case_id"] == "ir_0001"
+    assert kwargs["metadata"]["compass_eval_run_id"] == "ev_abc"
