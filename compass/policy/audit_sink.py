@@ -13,10 +13,11 @@ activity returns peek() so the workflow's own counter stays in sync.
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import Any
 
 import psycopg
 from psycopg.types.json import Jsonb
+
+from compass.policy.types import AuditPayload, SinkEvent
 
 
 class SequenceAllocator:
@@ -65,7 +66,7 @@ class AuditLogSink:
         self._allocator = allocator
         self._policy_hash = policy_hash
 
-    async def emit(self, event: dict[str, Any]) -> None:
+    async def emit(self, event: SinkEvent) -> None:
         sequence_no = next(self._allocator)
         # decision column: 'block' / 'escalate' for fired; NULL for skipped.
         decision = event.get("decision")
@@ -94,9 +95,9 @@ class AuditLogSink:
             )
 
 
-def _payload_from_event(event: dict[str, Any]) -> dict[str, Any]:
+def _payload_from_event(event: SinkEvent) -> AuditPayload:
     """Build the JSONB payload that lands in audit_log.payload."""
-    payload: dict[str, Any] = {}
+    payload: AuditPayload = {}
     # regulatory_basis is denormalized into payload for 7-year audit
     # interpretability without joining policy_snapshots.
     if "regulatory_basis" in event:

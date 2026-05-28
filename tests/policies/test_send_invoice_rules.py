@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import pytest
 
-from compass.policy import Phase, evaluate
+from compass.policy import Phase, RuleFiredEvent, SinkEvent, evaluate
 from compass.policy.sink import InMemorySink
 from policies.send_invoice import RULES
 from tests.policies.conftest import (
     happy_input_validation_ctx,
     out_of_scope_input_validation_ctx,
 )
+
+
+def _only_fired(events: list[SinkEvent]) -> list[RuleFiredEvent]:
+    return [e for e in events if e["event_kind"] == "rule_fired"]
+
 
 # ---------------------------------------------------------------------
 # input_validation phase
@@ -43,7 +49,7 @@ async def test_input_validation_blocks_out_of_scope() -> None:
     )
     assert decision.permit is False
     assert decision.rule_ids_fired == ("intent_must_be_send_invoice",)
-    fired = [e for e in sink.events if e["event_kind"] == "rule_fired"]
+    fired = _only_fired(sink.events)
     assert len(fired) == 1
     assert fired[0]["rule_id"] == "intent_must_be_send_invoice"
     assert fired[0]["evidence"]["value"] == "out_of_scope"
@@ -127,7 +133,7 @@ def _mut_rate_card_currency_mismatch(ctx: dict[str, Any]) -> None:
 )
 async def test_pre_action_proposal_block_rule_fires(
     base_ctx: dict[str, Any],
-    mutator,
+    mutator: Callable[[dict[str, Any]], None],
     expected_rule_id: str,
 ) -> None:
     mutator(base_ctx)
@@ -213,7 +219,7 @@ async def test_policy_drift_fires_escalate() -> None:
 # ---------------------------------------------------------------------
 
 
-_AUDIT_HAPPY = {
+_AUDIT_HAPPY: dict[str, Any] = {
     "audit_entry_candidate": {"phase": "audit_validation", "event_kind": "executed", "payload": {}},
     "policy_hash": "abc",
     "tool_calls": [{"tool_name": "list_customers", "args": {}, "result": []}],

@@ -18,7 +18,15 @@ from typing import Any
 
 from compass.policy.errors import PolicyEngineError
 from compass.policy.sink import Sink
-from compass.policy.types import Decision, Phase, Rule, Severity, Violation
+from compass.policy.types import (
+    Decision,
+    Phase,
+    Rule,
+    RuleFiredEvent,
+    RuleSkippedEvent,
+    Severity,
+    Violation,
+)
 
 
 async def evaluate(
@@ -42,13 +50,12 @@ async def evaluate(
             raise PolicyEngineError(rule_id=rule.id, cause=exc) from exc
 
         if outcome is None:
-            await sink.emit(
-                {
-                    "event_kind": "rule_skipped",
-                    "rule_id": rule.id,
-                    "phase": phase.value,
-                }
-            )
+            skipped: RuleSkippedEvent = {
+                "event_kind": "rule_skipped",
+                "rule_id": rule.id,
+                "phase": phase.value,
+            }
+            await sink.emit(skipped)
             continue
 
         # Predicate constructed Violation with rule_id=""; fill in from rule.
@@ -63,17 +70,16 @@ async def evaluate(
         else:
             violations.append(violation)
 
-        await sink.emit(
-            {
-                "event_kind": "rule_fired",
-                "rule_id": rule.id,
-                "phase": phase.value,
-                "decision": rule.severity.value,
-                "evidence": violation.evidence,
-                "message": violation.message,
-                "regulatory_basis": list(rule.regulatory_basis),
-            }
-        )
+        fired: RuleFiredEvent = {
+            "event_kind": "rule_fired",
+            "rule_id": rule.id,
+            "phase": phase.value,
+            "decision": rule.severity.value,
+            "evidence": violation.evidence,
+            "message": violation.message,
+            "regulatory_basis": list(rule.regulatory_basis),
+        }
+        await sink.emit(fired)
 
     permit = len(violations) == 0  # escalations do not block
     return Decision(

@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, cast
 
 from compass.policy.types import Rule
 
@@ -59,9 +59,10 @@ def _sort_recursive(value: Any) -> Any:
     deterministically across runs.
     """
     if isinstance(value, Mapping):
-        return {k: _sort_recursive(value[k]) for k in sorted(value)}
+        mapping = cast(Mapping[Any, Any], value)
+        return {k: _sort_recursive(mapping[k]) for k in sorted(mapping)}
     if isinstance(value, frozenset | set):
-        return sorted(_sort_recursive(v) for v in value)
+        return sorted(_sort_recursive(v) for v in cast(set[Any], value))
     if isinstance(value, list | tuple):
-        return [_sort_recursive(v) for v in value]
+        return [_sort_recursive(v) for v in cast(list[Any], value)]
     return value

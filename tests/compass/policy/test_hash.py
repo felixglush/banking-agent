@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from typing import Any
+
 from compass.policy import Phase, Rule, Severity
 from compass.policy.hashing import canonicalize_rule, hash_rules, serialize_rules
-from compass.policy.types import Predicate
+from compass.policy.types import Predicate, Violation
 
 
-def _pred(name: str = "p", **params) -> Predicate:
-    def check(_ctx):
+def _pred(name: str = "p", **params: Any) -> Predicate:
+    def check(_ctx: Mapping[str, Any]) -> Violation | None:
         return None
 
     return Predicate(primitive_name=name, params=dict(params), fn=check)
+
+
+def _none_predicate(_ctx: Mapping[str, Any]) -> Violation | None:
+    return None
 
 
 def test_same_rules_same_hash() -> None:
@@ -30,12 +37,12 @@ def test_param_key_order_does_not_change_hash() -> None:
     r1 = Rule(
         id="r1",
         phase=Phase.pre_action_proposal,
-        predicate=Predicate(primitive_name="p", params={"a": 1, "b": 2}, fn=lambda _c: None),
+        predicate=Predicate(primitive_name="p", params={"a": 1, "b": 2}, fn=_none_predicate),
     )
     r2 = Rule(
         id="r1",
         phase=Phase.pre_action_proposal,
-        predicate=Predicate(primitive_name="p", params={"b": 2, "a": 1}, fn=lambda _c: None),
+        predicate=Predicate(primitive_name="p", params={"b": 2, "a": 1}, fn=_none_predicate),
     )
     assert hash_rules([r1]) == hash_rules([r2])
 

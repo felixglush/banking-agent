@@ -10,11 +10,9 @@ Phase: pre_action_proposal.
 
 from __future__ import annotations
 
-from typing import Any
-
 from compass.policy.paths import MISSING, resolve_dotted
 from compass.policy.registry import primitive
-from compass.policy.types import Violation
+from compass.policy.types import PolicyContext, Violation
 
 
 @primitive("numeric_threshold")
@@ -31,7 +29,7 @@ def numeric_threshold(
             "(an open-ended band evaluates nothing)."
         )
 
-    def check(ctx: dict[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         value = resolve_dotted(ctx, field)
         if value is MISSING:
             return Violation(

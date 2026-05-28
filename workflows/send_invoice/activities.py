@@ -25,8 +25,11 @@ from temporalio import activity
 from temporalio.exceptions import ApplicationError
 
 from compass.policy import (
+    Actor,
+    AuditPayload,
     Phase,
     PolicyEngineError,
+    ToolCallRecord,
     evaluate,
     write_policy_snapshot,
 )
@@ -58,10 +61,10 @@ class AuditEvent:
     sequence_no: int
     phase: str
     event_kind: str
-    payload: dict[str, Any]
+    payload: AuditPayload
     decision: str | None = None
     rule_id: str | None = None
-    actor: dict[str, Any] | None = None
+    actor: Actor | None = None
     # New at Stage 5. When True, evaluate_audit_validation runs against
     # this event's payload before the row is written. Used for the
     # final terminal audit row of the workflow.
@@ -71,7 +74,7 @@ class AuditEvent:
     # rules can check log_policy_version.
     policy_hash_for_validation: str | None = None
     # Tool calls + reasoning are passed through for the same reason.
-    tool_calls_for_validation: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls_for_validation: list[ToolCallRecord] = field(default_factory=lambda: [])
     reasoning_text_for_validation: str = ""
 
 

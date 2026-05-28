@@ -17,7 +17,7 @@ suffix) returns the list itself.
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, Final
+from typing import Any, Final, cast
 
 # Sentinel for "the path did not resolve to anything". A unique object
 # so callers compare with ``is``.
@@ -39,12 +39,13 @@ def _resolve(node: Any, segments: list[str]) -> Any:
 
     if node is None or not isinstance(node, Mapping) or key not in node:
         return MISSING
-    value = node[key]
+    value = cast(Any, node[key])
 
     if wildcard:
         if not isinstance(value, list):
             return MISSING
-        resolved = [_resolve(item, rest) for item in value]
+        items = cast(list[Any], value)
+        resolved = [_resolve(item, rest) for item in items]
         if any(r is MISSING for r in resolved):
             return MISSING
         return resolved

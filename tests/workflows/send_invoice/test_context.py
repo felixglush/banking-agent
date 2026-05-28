@@ -9,6 +9,7 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
+from compass.policy import ToolCallRecord
 from workflows.send_invoice.context import (
     extract_reasoning_text,
     extract_tool_calls,
@@ -97,7 +98,7 @@ def test_extract_tool_calls_handles_empty() -> None:
 
 
 def test_project_customer_from_list_customers() -> None:
-    calls = [
+    calls: list[ToolCallRecord] = [
         {
             "tool_name": "list_customers",
             "args": {"name_q": "Acme"},
@@ -105,12 +106,14 @@ def test_project_customer_from_list_customers() -> None:
         },
     ]
     entities = project_resolved_entities(calls)
-    assert entities["customer"]["id"] == "cust_alpha"
-    assert entities["customer"]["kyc_status"] == "verified"
+    customer = entities["customer"]
+    assert customer is not None
+    assert customer["id"] == "cust_alpha"
+    assert customer["kyc_status"] == "verified"
 
 
 def test_project_customer_from_get_customer() -> None:
-    calls = [
+    calls: list[ToolCallRecord] = [
         {
             "tool_name": "get_customer",
             "args": {"customer_id": "cust_alpha"},
@@ -118,11 +121,13 @@ def test_project_customer_from_get_customer() -> None:
         },
     ]
     entities = project_resolved_entities(calls)
-    assert entities["customer"]["id"] == "cust_alpha"
+    customer = entities["customer"]
+    assert customer is not None
+    assert customer["id"] == "cust_alpha"
 
 
 def test_project_contract_from_get_active_contract() -> None:
-    calls = [
+    calls: list[ToolCallRecord] = [
         {
             "tool_name": "get_active_contract",
             "args": {"customer_id": "cust_alpha"},
@@ -130,7 +135,9 @@ def test_project_contract_from_get_active_contract() -> None:
         },
     ]
     entities = project_resolved_entities(calls)
-    assert entities["contract"]["id"] == "ct_alpha"
+    contract = entities["contract"]
+    assert contract is not None
+    assert contract["id"] == "ct_alpha"
 
 
 def test_project_contract_absent_when_not_queried() -> None:
@@ -140,7 +147,7 @@ def test_project_contract_absent_when_not_queried() -> None:
 
 
 def test_project_rate_cards_collected() -> None:
-    calls = [
+    calls: list[ToolCallRecord] = [
         {
             "tool_name": "get_rate_card",
             "args": {"role": "SA"},
@@ -157,7 +164,7 @@ def test_project_rate_cards_collected() -> None:
 
 
 def test_project_time_entries_collected() -> None:
-    calls = [
+    calls: list[ToolCallRecord] = [
         {
             "tool_name": "list_time_entries",
             "args": {},
