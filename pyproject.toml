@@ -4,6 +4,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "fastmcp==3.3.1",
+    "langfuse==4.7.0",
     "openai==2.38.0",
     "openai-agents==0.17.4",
     "openinference-instrumentation-openai-agents==1.5.1",

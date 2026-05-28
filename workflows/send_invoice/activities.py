@@ -15,11 +15,14 @@ docs/superpowers/specs/2026-05-27-stage-5-policy-engine-design.md
 §Activity failure semantics.
 """
 
+import json
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 import psycopg
+from langfuse import LangfuseOtelSpanAttributes
+from opentelemetry import trace as otel_trace
 from psycopg.types.json import Jsonb
 from temporalio import activity
 from temporalio.exceptions import ApplicationError
@@ -48,6 +51,42 @@ def _dsn() -> str:
     if not dsn:
         raise RuntimeError("workflows.send_invoice.activities: COMPASS_PG_DSN must be set.")
     return dsn
+
+
+def _enrich_langfuse_trace(event: "AuditEvent") -> None:
+    """Set Langfuse trace-level attributes on the active OTel span.
+
+    Langfuse aggregates these attributes onto the trace regardless of
+    which span sets them — so emitting from inside an activity works.
+    Silent no-op if no active span (Langfuse not configured).
+
+    Trace attributes set:
+    * ``intent_classified`` event: trace_name=send_invoice:<intent>,
+      tags=[send_invoice, <intent>].
+    * ``approval_signal`` / ``executed`` / ``declined`` events: user.id
+      from actor; trace_output for terminal events.
+    """
+    span = otel_trace.get_current_span()
+    if not span.is_recording():
+        return
+    if event.event_kind == "intent_classified":
+        classification = cast(dict[str, Any] | None, event.payload.get("classification"))
+        if classification is not None:
+            intent = cast(str | None, classification.get("intent"))
+            if intent is not None:
+                span.set_attribute(LangfuseOtelSpanAttributes.TRACE_NAME, f"send_invoice:{intent}")
+                span.set_attribute(
+                    LangfuseOtelSpanAttributes.TRACE_TAGS, json.dumps(["send_invoice", intent])
+                )
+    if event.actor is not None:
+        user_id = cast(str | None, event.actor.get("user_id"))
+        if user_id is not None:
+            span.set_attribute(LangfuseOtelSpanAttributes.TRACE_USER_ID, user_id)
+    if event.is_terminal_event:
+        span.set_attribute(
+            LangfuseOtelSpanAttributes.TRACE_OUTPUT,
+            json.dumps({"phase": event.phase, "event_kind": event.event_kind}),
+        )
 
 
 # ---------------------------------------------------------------------
@@ -126,6 +165,7 @@ async def audit_log(event: AuditEvent) -> None:
     audit trail isn't lost. The rule_fired row stays in the log for
     later analysis.
     """
+    _enrich_langfuse_trace(event)
     policy_disabled = os.environ.get("COMPASS_POLICY_DISABLE") == "1"
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         try:
@@ -197,6 +237,15 @@ async def evaluate_policy(args: EvaluatePolicyInput) -> PolicyDecisionPayload:
     See spec §Workflow integration — evaluate_policy.
     """
     phase = Phase(args.phase)
+    # Type the activity span as a Langfuse guardrail observation so the
+    # UI shows policy gates as gates, not generic spans.
+    span = otel_trace.get_current_span()
+    if span.is_recording():
+        span.set_attribute(LangfuseOtelSpanAttributes.OBSERVATION_TYPE, "guardrail")
+        span.set_attribute(
+            LangfuseOtelSpanAttributes.OBSERVATION_INPUT,
+            json.dumps({"phase": args.phase}),
+        )
 
     # ---- eval-only ablation hatch ----------------------------------
     # Stage-7+ policy-ablation eval (build-plan §Stage 7) flips this
