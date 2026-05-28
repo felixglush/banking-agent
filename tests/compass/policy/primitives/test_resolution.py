@@ -9,14 +9,16 @@ import pytest
 from compass.policy.primitives.resolution import require_existing_entity
 
 _PRED = require_existing_entity(
-    field="resolved_entities.customer", entity_type="customer",
+    field="resolved_entities.customer",
+    entity_type="customer",
 )
 
 
 async def test_entity_present_skips() -> None:
-    assert await _PRED(
-        {"resolved_entities": {"customer": {"id": "cust_alpha", "name": "Acme"}}}
-    ) is None
+    assert (
+        await _PRED({"resolved_entities": {"customer": {"id": "cust_alpha", "name": "Acme"}}})
+        is None
+    )
 
 
 @pytest.mark.parametrize(

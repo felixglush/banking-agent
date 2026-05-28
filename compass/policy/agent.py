@@ -48,14 +48,19 @@ def attach_to_agent[T](
     output_rules = [r for r in rules if r.phase is Phase.output_validation]
 
     if input_rules:
+
         @input_guardrail  # type: ignore[misc]
         async def _input_gate(
-            _ctx: RunContextWrapper[Any], _agent: Agent[T], input_value: Any,
+            _ctx: RunContextWrapper[Any],
+            _agent: Agent[T],
+            input_value: Any,
         ) -> GuardrailFunctionOutput:
             sink: Sink = await sink_factory() if sink_factory else NullSink()
             decision = await evaluate(
-                input_rules, Phase.input_validation,
-                {"user_message": input_value}, sink=sink,
+                input_rules,
+                Phase.input_validation,
+                {"user_message": input_value},
+                sink=sink,
             )
             return GuardrailFunctionOutput(
                 output_info={"rule_ids_fired": list(decision.rule_ids_fired)},
@@ -65,18 +70,20 @@ def attach_to_agent[T](
         agent.input_guardrails = [*agent.input_guardrails, _input_gate]
 
     if output_rules:
+
         @output_guardrail  # type: ignore[misc]
         async def _output_gate(
-            _ctx: RunContextWrapper[Any], _agent: Agent[T], output: Any,
+            _ctx: RunContextWrapper[Any],
+            _agent: Agent[T],
+            output: Any,
         ) -> GuardrailFunctionOutput:
             sink: Sink = await sink_factory() if sink_factory else NullSink()
-            ctx_dict = (
-                output.model_dump() if hasattr(output, "model_dump")
-                else {"output": output}
-            )
+            ctx_dict = output.model_dump() if hasattr(output, "model_dump") else {"output": output}
             decision = await evaluate(
-                output_rules, Phase.output_validation,
-                {"proposal": ctx_dict}, sink=sink,
+                output_rules,
+                Phase.output_validation,
+                {"proposal": ctx_dict},
+                sink=sink,
             )
             return GuardrailFunctionOutput(
                 output_info={"rule_ids_fired": list(decision.rule_ids_fired)},

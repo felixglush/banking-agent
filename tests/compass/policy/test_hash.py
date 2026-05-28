@@ -10,6 +10,7 @@ from compass.policy.types import Predicate
 def _pred(name: str = "p", **params) -> Predicate:
     def check(_ctx):
         return None
+
     return Predicate(primitive_name=name, params=dict(params), fn=check)
 
 
@@ -26,12 +27,16 @@ def test_param_change_changes_hash() -> None:
 
 def test_param_key_order_does_not_change_hash() -> None:
     # Params dicts ordered differently must hash identically.
-    r1 = Rule(id="r1", phase=Phase.pre_action_proposal,
-              predicate=Predicate(primitive_name="p",
-                                  params={"a": 1, "b": 2}, fn=lambda _c: None))
-    r2 = Rule(id="r1", phase=Phase.pre_action_proposal,
-              predicate=Predicate(primitive_name="p",
-                                  params={"b": 2, "a": 1}, fn=lambda _c: None))
+    r1 = Rule(
+        id="r1",
+        phase=Phase.pre_action_proposal,
+        predicate=Predicate(primitive_name="p", params={"a": 1, "b": 2}, fn=lambda _c: None),
+    )
+    r2 = Rule(
+        id="r1",
+        phase=Phase.pre_action_proposal,
+        predicate=Predicate(primitive_name="p", params={"b": 2, "a": 1}, fn=lambda _c: None),
+    )
     assert hash_rules([r1]) == hash_rules([r2])
 
 
@@ -43,28 +48,29 @@ def test_rule_reorder_changes_hash() -> None:
 
 
 def test_severity_change_changes_hash() -> None:
-    r1 = Rule(id="r1", phase=Phase.pre_action_proposal,
-              predicate=_pred(), severity=Severity.BLOCK)
-    r2 = Rule(id="r1", phase=Phase.pre_action_proposal,
-              predicate=_pred(), severity=Severity.ESCALATE)
+    r1 = Rule(id="r1", phase=Phase.pre_action_proposal, predicate=_pred(), severity=Severity.BLOCK)
+    r2 = Rule(
+        id="r1", phase=Phase.pre_action_proposal, predicate=_pred(), severity=Severity.ESCALATE
+    )
     assert hash_rules([r1]) != hash_rules([r2])
 
 
 def test_regulatory_basis_change_changes_hash() -> None:
-    r1 = Rule(id="r1", phase=Phase.pre_action_proposal,
-              predicate=_pred(), regulatory_basis=("a",))
-    r2 = Rule(id="r1", phase=Phase.pre_action_proposal,
-              predicate=_pred(), regulatory_basis=("b",))
+    r1 = Rule(id="r1", phase=Phase.pre_action_proposal, predicate=_pred(), regulatory_basis=("a",))
+    r2 = Rule(id="r1", phase=Phase.pre_action_proposal, predicate=_pred(), regulatory_basis=("b",))
     assert hash_rules([r1]) != hash_rules([r2])
 
 
 def test_canonicalize_rule_keys() -> None:
-    r = Rule(id="r1", phase=Phase.pre_action_proposal,
-             predicate=_pred("p", max=10),
-             severity=Severity.BLOCK,
-             regulatory_basis=("SOP-1",),
-             tags=("tag1", "tag2"),
-             must_be_covered=True)
+    r = Rule(
+        id="r1",
+        phase=Phase.pre_action_proposal,
+        predicate=_pred("p", max=10),
+        severity=Severity.BLOCK,
+        regulatory_basis=("SOP-1",),
+        tags=("tag1", "tag2"),
+        must_be_covered=True,
+    )
     canon = canonicalize_rule(r)
     assert canon["id"] == "r1"
     assert canon["phase"] == "pre_action_proposal"

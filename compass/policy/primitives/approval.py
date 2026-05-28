@@ -33,9 +33,7 @@ def prohibit_silent_modification_after_confirmation():
 
     def check(ctx: dict[str, Any]) -> Violation | None:
         at_proposal = ctx.get("proposal_hash_at_proposal")
-        current = ctx.get("__test_current_proposal_hash__") or ctx.get(
-            "current_proposal_hash"
-        )
+        current = ctx.get("__test_current_proposal_hash__") or ctx.get("current_proposal_hash")
         if at_proposal is None or current is None:
             return None
         if at_proposal == current:
@@ -64,9 +62,7 @@ def prohibit_policy_drift_after_confirmation():
 
     def check(ctx: dict[str, Any]) -> Violation | None:
         at_proposal = ctx.get("policy_hash_at_proposal")
-        current = ctx.get("__test_current_policy_hash__") or ctx.get(
-            "current_policy_hash"
-        )
+        current = ctx.get("__test_current_policy_hash__") or ctx.get("current_policy_hash")
         if at_proposal is None or current is None:
             return None
         if at_proposal == current:

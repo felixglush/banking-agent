@@ -27,6 +27,7 @@ def test_decorator_returns_predicate_with_name_and_params() -> None:
     def my_threshold(*, max: int):
         def check(_ctx):
             return None
+
         return check
 
     pred = my_threshold(max=10)
@@ -40,6 +41,7 @@ def test_params_are_frozen() -> None:
     def my_threshold(*, max: int):
         def check(_ctx):
             return None
+
         return check
 
     pred = my_threshold(max=10)
@@ -49,9 +51,12 @@ def test_params_are_frozen() -> None:
 
 def test_list_primitives_returns_registered() -> None:
     @primitive("first")
-    def first(): return lambda _ctx: None
+    def first():
+        return lambda _ctx: None
+
     @primitive("second")
-    def second(): return lambda _ctx: None
+    def second():
+        return lambda _ctx: None
 
     catalogue = list_primitives()
     assert set(catalogue.keys()) == {"first", "second"}
@@ -59,11 +64,14 @@ def test_list_primitives_returns_registered() -> None:
 
 def test_duplicate_registration_raises() -> None:
     @primitive("dup")
-    def dup_a(): return lambda _ctx: None
+    def dup_a():
+        return lambda _ctx: None
 
     with pytest.raises(RuntimeError, match="duplicate primitive"):
+
         @primitive("dup")
-        def dup_b(): return lambda _ctx: None
+        def dup_b():
+            return lambda _ctx: None
 
 
 async def test_predicate_passes_through_violation() -> None:
@@ -71,6 +79,7 @@ async def test_predicate_passes_through_violation() -> None:
     def factory():
         def check(_ctx):
             return Violation(rule_id="", message="x", evidence={})
+
         return check
 
     pred = factory()

@@ -43,9 +43,7 @@ from workflows.send_invoice.types import (
 def _dsn() -> str:
     dsn = os.environ.get("COMPASS_PG_DSN")
     if not dsn:
-        raise RuntimeError(
-            "workflows.send_invoice.activities: COMPASS_PG_DSN must be set."
-        )
+        raise RuntimeError("workflows.send_invoice.activities: COMPASS_PG_DSN must be set.")
     return dsn
 
 
@@ -78,7 +76,10 @@ class AuditEvent:
 
 
 async def _write_audit_row(
-    cur: psycopg.AsyncCursor, event: AuditEvent, *, policy_hash: str | None,
+    cur: psycopg.AsyncCursor,
+    event: AuditEvent,
+    *,
+    policy_hash: str | None,
 ) -> None:
     """Single-row INSERT into audit_log; idempotent via ON CONFLICT."""
     actor_param = Jsonb(event.actor) if event.actor is not None else None
@@ -148,7 +149,10 @@ async def audit_log(event: AuditEvent) -> None:
                     )
                     try:
                         await evaluate(
-                            RULES, Phase.audit_validation, ctx, sink=sink,
+                            RULES,
+                            Phase.audit_validation,
+                            ctx,
+                            sink=sink,
                         )
                     except PolicyEngineError as e:
                         raise ApplicationError(
@@ -157,12 +161,16 @@ async def audit_log(event: AuditEvent) -> None:
                             non_retryable=not e.retryable,
                         ) from e
                 await _write_audit_row(
-                    cur, event, policy_hash=event.policy_hash_for_validation,
+                    cur,
+                    event,
+                    policy_hash=event.policy_hash_for_validation,
                 )
             await conn.commit()
         except psycopg.Error as e:
             raise ApplicationError(
-                str(e), type="PolicyInfraError", non_retryable=False,
+                str(e),
+                type="PolicyInfraError",
+                non_retryable=False,
             ) from e
 
 
@@ -212,7 +220,10 @@ async def evaluate_policy(args: EvaluatePolicyInput) -> PolicyDecisionPayload:
             policy_hash = await write_policy_snapshot(conn, "send_invoice", RULES)
             allocator = SequenceAllocator(args.starting_sequence_no)
             sink = AuditLogSink(
-                conn, args.workflow_run_id, allocator, policy_hash,
+                conn,
+                args.workflow_run_id,
+                allocator,
+                policy_hash,
             )
 
             # The drift-detection primitives compare hashes pulled from
@@ -237,7 +248,9 @@ async def evaluate_policy(args: EvaluatePolicyInput) -> PolicyDecisionPayload:
             await conn.commit()
     except psycopg.Error as e:
         raise ApplicationError(
-            str(e), type="PolicyInfraError", non_retryable=False,
+            str(e),
+            type="PolicyInfraError",
+            non_retryable=False,
         ) from e
 
     if not decision.permit:
@@ -247,8 +260,7 @@ async def evaluate_policy(args: EvaluatePolicyInput) -> PolicyDecisionPayload:
                 "phase": phase.value,
                 "rule_ids_fired": list(decision.rule_ids_fired),
                 "violations": [
-                    {"rule_id": v.rule_id, "message": v.message,
-                     "evidence": v.evidence}
+                    {"rule_id": v.rule_id, "message": v.message, "evidence": v.evidence}
                     for v in decision.violations
                 ],
             },

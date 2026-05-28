@@ -22,7 +22,11 @@ from workflows.send_invoice.context import (
 
 
 def _tool_call_item(
-    name: str, args: dict[str, Any], output: Any, *, call_id: str | None = None,
+    name: str,
+    args: dict[str, Any],
+    output: Any,
+    *,
+    call_id: str | None = None,
 ) -> list[SimpleNamespace]:
     """Build the (tool_call_item, tool_call_output_item) pair the SDK emits.
 
@@ -56,13 +60,14 @@ def _run_result(items: list[SimpleNamespace]) -> SimpleNamespace:
 
 
 def test_extract_tool_calls_returns_one_per_call() -> None:
-    rr = _run_result([
-        *_tool_call_item("list_customers", {"name": "Acme"},
-                         [{"id": "cust_alpha"}]),
-        *_tool_call_item("get_active_contract",
-                         {"customer_id": "cust_alpha"},
-                         {"id": "ct_alpha"}),
-    ])
+    rr = _run_result(
+        [
+            *_tool_call_item("list_customers", {"name": "Acme"}, [{"id": "cust_alpha"}]),
+            *_tool_call_item(
+                "get_active_contract", {"customer_id": "cust_alpha"}, {"id": "ct_alpha"}
+            ),
+        ]
+    )
     calls = extract_tool_calls(rr)
     assert len(calls) == 2
     assert calls[0]["tool_name"] == "list_customers"
@@ -72,10 +77,12 @@ def test_extract_tool_calls_returns_one_per_call() -> None:
 
 
 def test_extract_tool_calls_strips_non_tool_items() -> None:
-    rr = _run_result([
-        _message_item("assistant", "thinking..."),
-        *_tool_call_item("list_customers", {}, []),
-    ])
+    rr = _run_result(
+        [
+            _message_item("assistant", "thinking..."),
+            *_tool_call_item("list_customers", {}, []),
+        ]
+    )
     calls = extract_tool_calls(rr)
     assert [c["tool_name"] for c in calls] == ["list_customers"]
 
@@ -94,8 +101,7 @@ def test_project_customer_from_list_customers() -> None:
         {
             "tool_name": "list_customers",
             "args": {"name_q": "Acme"},
-            "result": [{"id": "cust_alpha", "name": "Acme",
-                        "kyc_status": "verified"}],
+            "result": [{"id": "cust_alpha", "name": "Acme", "kyc_status": "verified"}],
         },
     ]
     entities = project_resolved_entities(calls)
@@ -120,8 +126,7 @@ def test_project_contract_from_get_active_contract() -> None:
         {
             "tool_name": "get_active_contract",
             "args": {"customer_id": "cust_alpha"},
-            "result": {"id": "ct_alpha", "currency": "USD",
-                       "monthly_hour_cap": 40},
+            "result": {"id": "ct_alpha", "currency": "USD", "monthly_hour_cap": 40},
         },
     ]
     entities = project_resolved_entities(calls)
@@ -136,12 +141,16 @@ def test_project_contract_absent_when_not_queried() -> None:
 
 def test_project_rate_cards_collected() -> None:
     calls = [
-        {"tool_name": "get_rate_card", "args": {"role": "SA"},
-         "result": {"id": "rc_sa", "list_amount_cents": 40000,
-                    "currency": "USD"}},
-        {"tool_name": "get_rate_card", "args": {"role": "PM"},
-         "result": {"id": "rc_pm", "list_amount_cents": 25000,
-                    "currency": "USD"}},
+        {
+            "tool_name": "get_rate_card",
+            "args": {"role": "SA"},
+            "result": {"id": "rc_sa", "list_amount_cents": 40000, "currency": "USD"},
+        },
+        {
+            "tool_name": "get_rate_card",
+            "args": {"role": "PM"},
+            "result": {"id": "rc_pm", "list_amount_cents": 25000, "currency": "USD"},
+        },
     ]
     entities = project_resolved_entities(calls)
     assert {rc["id"] for rc in entities["rate_card_entries"]} == {"rc_sa", "rc_pm"}
@@ -149,9 +158,14 @@ def test_project_rate_cards_collected() -> None:
 
 def test_project_time_entries_collected() -> None:
     calls = [
-        {"tool_name": "list_time_entries", "args": {},
-         "result": [{"id": "te_1", "hours_micros": 2_000_000},
-                    {"id": "te_2", "hours_micros": 4_000_000}]},
+        {
+            "tool_name": "list_time_entries",
+            "args": {},
+            "result": [
+                {"id": "te_1", "hours_micros": 2_000_000},
+                {"id": "te_2", "hours_micros": 4_000_000},
+            ],
+        },
     ]
     entities = project_resolved_entities(calls)
     assert [te["id"] for te in entities["time_entries"]] == ["te_1", "te_2"]
@@ -163,11 +177,13 @@ def test_project_time_entries_collected() -> None:
 
 
 def test_extract_reasoning_joins_assistant_messages() -> None:
-    rr = _run_result([
-        _message_item("assistant", "looking up customer"),
-        *_tool_call_item("list_customers", {}, []),
-        _message_item("assistant", "found it"),
-    ])
+    rr = _run_result(
+        [
+            _message_item("assistant", "looking up customer"),
+            *_tool_call_item("list_customers", {}, []),
+            _message_item("assistant", "found it"),
+        ]
+    )
     text = extract_reasoning_text(rr)
     assert "looking up customer" in text
     assert "found it" in text

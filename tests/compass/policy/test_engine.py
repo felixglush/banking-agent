@@ -93,7 +93,7 @@ async def test_escalate_rule_fires_but_permits() -> None:
         severity=Severity.ESCALATE,
     )
     decision = await evaluate([rule], Phase.pre_action_proposal, {}, sink=sink)
-    assert decision.permit is True       # escalation does not block
+    assert decision.permit is True  # escalation does not block
     assert decision.rule_ids_fired == ("r_esc",)
     assert len(decision.escalations) == 1
     assert decision.violations == ()
@@ -102,8 +102,7 @@ async def test_escalate_rule_fires_but_permits() -> None:
 async def test_declaration_order_preserved() -> None:
     sink = InMemorySink()
     rules = [
-        Rule(id=f"r{i}", phase=Phase.pre_action_proposal,
-             predicate=make_predicate(fires=True))
+        Rule(id=f"r{i}", phase=Phase.pre_action_proposal, predicate=make_predicate(fires=True))
         for i in range(3)
     ]
     decision = await evaluate(rules, Phase.pre_action_proposal, {}, sink=sink)
@@ -139,10 +138,10 @@ async def test_evaluate_pre_action_proposal_wrapper() -> None:
 async def test_evaluate_pre_execute_wrapper_filters_phase() -> None:
     sink = InMemorySink()
     rules = [
-        Rule(id="r_proposal", phase=Phase.pre_action_proposal,
-             predicate=make_predicate(fires=True)),
-        Rule(id="r_exec", phase=Phase.pre_execute,
-             predicate=make_predicate(fires=False)),
+        Rule(
+            id="r_proposal", phase=Phase.pre_action_proposal, predicate=make_predicate(fires=True)
+        ),
+        Rule(id="r_exec", phase=Phase.pre_execute, predicate=make_predicate(fires=False)),
     ]
     decision = await evaluate_pre_execute(rules, {}, sink=sink)
     # Only the pre_execute rule was evaluated.
@@ -164,10 +163,18 @@ async def test_evaluate_audit_validation_wrapper() -> None:
 async def test_mixed_block_and_escalate_blocks() -> None:
     sink = InMemorySink()
     rules = [
-        Rule(id="r_block", phase=Phase.pre_action_proposal,
-             predicate=make_predicate(fires=True), severity=Severity.BLOCK),
-        Rule(id="r_esc", phase=Phase.pre_action_proposal,
-             predicate=make_predicate(fires=True), severity=Severity.ESCALATE),
+        Rule(
+            id="r_block",
+            phase=Phase.pre_action_proposal,
+            predicate=make_predicate(fires=True),
+            severity=Severity.BLOCK,
+        ),
+        Rule(
+            id="r_esc",
+            phase=Phase.pre_action_proposal,
+            predicate=make_predicate(fires=True),
+            severity=Severity.ESCALATE,
+        ),
     ]
     decision = await evaluate(rules, Phase.pre_action_proposal, {}, sink=sink)
     assert decision.permit is False

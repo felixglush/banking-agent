@@ -74,7 +74,9 @@ def contract_consistency_check():
         proposal = resolve_dotted(ctx, "proposal")
         if proposal is MISSING:
             return Violation(
-                rule_id="", message="proposal missing", evidence={},
+                rule_id="",
+                message="proposal missing",
+                evidence={},
             )
         proposal_currency = proposal.get("currency")
         contract_currency = contract.get("currency")
@@ -154,10 +156,7 @@ def currency_consistency_check():
         rate_cards = resolve_dotted(ctx, "resolved_entities.rate_card_entries")
         if rate_cards is MISSING or not isinstance(rate_cards, list):
             return None
-        mismatched = [
-            rc.get("id") for rc in rate_cards
-            if rc.get("currency") != proposal_currency
-        ]
+        mismatched = [rc.get("id") for rc in rate_cards if rc.get("currency") != proposal_currency]
         if mismatched:
             return Violation(
                 rule_id="",

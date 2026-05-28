@@ -33,7 +33,9 @@ from tests.policies.conftest import (
     out_of_scope_input_validation_ctx,
 )
 from workflows.send_invoice.activities import (
+    AuditEvent,
     EvaluatePolicyInput,
+    audit_log,
     evaluate_policy,
 )
 from workflows.send_invoice.context import hash_proposal
@@ -339,8 +341,6 @@ async def test_each_pre_action_block_rule_rejects_through_activity(
 async def test_audit_validation_missing_policy_hash_emits_rule_fired() -> None:
     """audit_has_policy_version fires when terminal-row policy_hash is empty.
     Activity does not raise — defect surfaces in audit_log only."""
-    from workflows.send_invoice.activities import AuditEvent, audit_log
-
     run_id = _new_workflow_id()
     await audit_log(
         AuditEvent(
@@ -363,8 +363,6 @@ async def test_audit_validation_missing_policy_hash_emits_rule_fired() -> None:
 
 async def test_audit_validation_empty_tool_calls_emits_rule_fired() -> None:
     """audit_has_data_sources fires when the agent consulted no tools."""
-    from workflows.send_invoice.activities import AuditEvent, audit_log
-
     run_id = _new_workflow_id()
     await audit_log(
         AuditEvent(
