@@ -71,3 +71,7 @@ asyncio_mode = "auto"
 # PoolTimeout on the first connection request.
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
+addopts = "-m 'not e2e'"
+markers = [
+    "e2e: end-to-end tests against real Temporal + Postgres + Langfuse Cloud (skipped by default)",
+]
