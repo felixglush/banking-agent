@@ -1,49 +1,66 @@
 # `send_invoice` workflow
 
-Stage 4 deliverable: a durable Temporal workflow that wraps an OpenAI
-Agents SDK agent loop, gates on a human approval signal, then writes the
-invoice and an audit row. Full design in
-[`docs/superpowers/specs/2026-05-27-stage-4-send-invoice-workflow-design.md`](../../docs/superpowers/specs/2026-05-27-stage-4-send-invoice-workflow-design.md);
-build-plan §Stage 4 is the contract.
+A durable Temporal workflow that wraps an OpenAI Agents SDK agent
+loop, gates on a human approval signal, then writes the invoice and
+an audit row. Stage 5 added the policy engine; Stage 6 added the
+scope-gate classifier at workflow entry. Full design in:
+
+- [`docs/superpowers/specs/2026-05-27-stage-4-send-invoice-workflow-design.md`](../../docs/superpowers/specs/2026-05-27-stage-4-send-invoice-workflow-design.md)
+- [`docs/superpowers/specs/2026-05-27-stage-5-policy-engine-design.md`](../../docs/superpowers/specs/2026-05-27-stage-5-policy-engine-design.md)
+- [`docs/superpowers/specs/2026-05-27-stage-6-intent-classifier-design.md`](../../docs/superpowers/specs/2026-05-27-stage-6-intent-classifier-design.md)
+
+Build-plan §Stage 4, §Stage 5, §Stage 6 are the contracts.
 
 ## Components
 
 | File | What it owns |
 | --- | --- |
-| `types.py` | Pydantic models (`SendInvoiceRequest`, `InvoiceProposal`, `LineItemProposal`, `ApprovalDecision`, `PolicyDecision`, `WorkflowResult`). |
-| `agents.py` | `build_main_agent(mcp_server)` — single agent, `output_type=InvoiceProposal`, default model `gpt-5-nano`. |
-| `activities.py` | `evaluate_policy` (Stage 4 stub → permit), `execute_send` (idempotent invoice insert), `audit_log` (append-only). |
-| `workflow.py` | `SendInvoiceWorkflow` — agent loop → policy → wait_condition(approved) → execute_send → audit_log. |
+| `types.py` | Pydantic models (`SendInvoiceRequest`, `InvoiceProposal`, `LineItemProposal`, `ApprovalDecision`, `PolicyDecisionPayload`, `WorkflowResult`). |
+| `agents.py` | `build_main_agent(mcp_server)` — single agent, `output_type=InvoiceProposal`, default model `gpt-4.1-mini` (override `OPENAI_MODEL`). |
+| `scope_gate.py` | `build_scope_gate_agent()` + `IntentClassification` (Pydantic) — no MCP, no tools. Default model `gpt-4.1-mini` (override `OPENAI_SCOPE_GATE_MODEL`). |
+| `context.py` | Pure projections over `RunResult` → policy context dicts; `hash_proposal`. |
+| `primitives.py` | App-specific Billing-integrity primitives (`require_amount_source`, `contract_consistency_check`, `prohibit_exceed_contract_cap`, `currency_consistency_check`). |
+| `activities.py` | `evaluate_policy` (phase-switched; snapshot + sink in one tx), `execute_send` (idempotent invoice insert), `audit_log` (append-only; `is_terminal_event` runs audit_validation). |
+| `workflow.py` | `SendInvoiceWorkflow` — scope-gate → input_validation gate → main agent → pre_action_proposal → wait_condition(approved) → pre_execute → execute_send → audit_log. |
 | `worker.py` | Loads `.env.local`, wires `OpenAIAgentsPlugin` + `StatefulMCPServerProvider("bank", …)`, runs the worker. |
 
 ## Workflow diagram
 
 Solid arrows are the main control flow inside `SendInvoiceWorkflow.run`.
 Dashed arrows show how the external `approve` signal feeds the
-`wait_condition`. Orange = audit-log write; purple = Temporal activity;
+`wait_condition`. Orange = audit-log write; purple = Temporal activity
+(or auto-activity inside `Runner.run`); green = policy phase gate;
 blue = terminal `WorkflowResult.outcome`.
 
 ```mermaid
 flowchart TD
-    Start([SendInvoiceRequest]) --> Agent[Agent loop<br/>stateful MCP: bank<br/>Runner.run, max_turns=10]
+    Start([SendInvoiceRequest]) --> ScopeGate[Scope-gate sub-agent<br/>Runner.run, max_turns=1<br/>no MCP, no tools]
+    ScopeGate --> HasClass{classification?}
+    HasClass -- no --> AuditNoClass[audit: agent_no_output<br/>phase=input_validation]
+    AuditNoClass --> EndUnsupported1([unsupported])
+    HasClass -- yes --> InputGate{{evaluate_policy<br/>phase=input_validation}}
+    InputGate -- block --> AuditUnsupported[audit: unsupported<br/>+ classifier payload]
+    AuditUnsupported --> EndUnsupported2([unsupported])
+    InputGate -- permit --> AuditIntent[audit: intent_classified]
+    AuditIntent --> Agent[Main agent loop<br/>stateful MCP: bank<br/>Runner.run, max_turns=10]
     Agent --> HasOutput{proposal?}
-    HasOutput -- no --> AuditNoOut[audit: agent_no_output]
+    HasOutput -- no --> AuditNoOut[audit: agent_no_output<br/>phase=pre_action_proposal]
     AuditNoOut --> EndRejected1([policy_rejected])
-    HasOutput -- yes --> Policy[evaluate_policy]
-    Policy -- ApplicationError --> AuditEngineFail[audit: policy_engine_failure]
-    AuditEngineFail --> EndRejected2([policy_rejected])
-    Policy --> Permit{permit?}
-    Permit -- no --> AuditPolReject[audit: policy_rejected<br/>rule_ids_fired]
-    AuditPolReject --> EndRejected3([policy_rejected])
-    Permit -- yes --> Wait[wait_condition<br/>_approval is not None<br/>timeout=approval_timeout_seconds]
+    HasOutput -- yes --> ProposalGate{{evaluate_policy<br/>phase=pre_action_proposal}}
+    ProposalGate -- block --> AuditPolReject[audit: policy_rejected<br/>rule_ids_fired]
+    AuditPolReject --> EndRejected2([policy_rejected])
+    ProposalGate -- permit/escalate --> Wait[wait_condition<br/>_approval is not None<br/>timeout=approval_timeout_seconds]
     Wait -- timeout --> AuditTimeout[audit: declined<br/>reason=approval_timeout]
     AuditTimeout --> EndTimeout([timeout])
     Wait -- signal --> AuditSignal[audit: approval_signal]
     AuditSignal --> Approved{approved?}
     Approved -- no --> AuditDeclined[audit: declined]
     AuditDeclined --> EndDeclined([declined])
-    Approved -- yes --> Execute[execute_send]
-    Execute --> AuditExecuted[audit: executed]
+    Approved -- yes --> PreExecGate{{evaluate_policy<br/>phase=pre_execute}}
+    PreExecGate -- block --> AuditDriftReject[audit: policy_rejected<br/>drift/silent-mod]
+    AuditDriftReject --> EndRejected3([policy_rejected])
+    PreExecGate -- permit/escalate --> Execute[execute_send]
+    Execute --> AuditExecuted[audit: executed<br/>is_terminal_event=True<br/>runs audit_validation]
     AuditExecuted --> EndSent([sent + invoice_id])
 
     Signal[/approve signal/]:::signal -. first wins .-> SetApproval[_approval = decision]
@@ -53,11 +70,22 @@ flowchart TD
     classDef audit fill:#fff4e6,stroke:#d9822b,color:#000
     classDef terminal fill:#e6f3ff,stroke:#1f6feb,color:#000
     classDef activity fill:#f0e6ff,stroke:#6f42c1,color:#000
+    classDef policy fill:#e8f7e8,stroke:#2da44e,color:#000
     classDef signal fill:#e8f7e8,stroke:#2da44e,color:#000
-    class AuditNoOut,AuditEngineFail,AuditPolReject,AuditTimeout,AuditSignal,AuditDeclined,AuditExecuted,AuditDup audit
-    class EndRejected1,EndRejected2,EndRejected3,EndTimeout,EndDeclined,EndSent terminal
-    class Agent,Policy,Execute activity
+    class AuditNoClass,AuditUnsupported,AuditIntent,AuditNoOut,AuditPolReject,AuditTimeout,AuditSignal,AuditDeclined,AuditDriftReject,AuditExecuted,AuditDup audit
+    class EndUnsupported1,EndUnsupported2,EndRejected1,EndRejected2,EndRejected3,EndTimeout,EndDeclined,EndSent terminal
+    class ScopeGate,Agent,Execute activity
+    class InputGate,ProposalGate,PreExecGate policy
 ```
+
+### Policy phases wired in this workflow
+
+| Phase | Where it fires | What it checks |
+| --- | --- | --- |
+| `input_validation` | After scope-gate `Runner.run`, before main agent | Classifier output (`intent_must_be_send_invoice`). |
+| `pre_action_proposal` | After main agent `Runner.run`, before approval wait | Resolution, KYC, billing integrity, evidence citation, amount cap (8 rules). |
+| `pre_execute` | After approval signal, before `execute_send` | Proposal-hash drift, policy-hash drift between proposal and execute (2 rules). |
+| `audit_validation` | Inside `audit_log` on the terminal `executed` row only | Audit-completeness defect detectors (2 rules). |
 
 Every audit-write and activity above is allocated a monotonic
 `sequence_no` from workflow state, so retries collide on the
@@ -69,8 +97,14 @@ Drop into `.env.local` at the repo root (already gitignored):
 
 ```
 OPENAI_API_KEY=sk-...
-# optional override; defaults to gpt-5-nano
-OPENAI_MODEL=gpt-5-nano
+
+# main reasoning agent — drafts the InvoiceProposal. Default gpt-4.1-mini.
+# OPENAI_MODEL=gpt-4.1-mini
+
+# scope-gate classifier — small structured-output task. Default reuses
+# OPENAI_MODEL's default; override independently once a distilled or
+# faster classifier is wired in.
+# OPENAI_SCOPE_GATE_MODEL=gpt-4.1-mini
 
 # the worker and the MCP subprocess both read this
 COMPASS_PG_DSN=postgresql://compass:compass@localhost:5432/compass
@@ -114,8 +148,16 @@ uv run python -m scripts.approve_workflow WORKFLOW_ID --decline \
 ```
 
 After approval the workflow writes one row into `invoices`, one row per
-line item into `invoice_line_items`, and three rows into `audit_log`
-(`proposal` → `approval_signal` → `executed`).
+line item into `invoice_line_items`, and an `audit_log` chain whose
+exact shape depends on which rules fire. On a clean send-invoice run
+with permitted policy at every phase, the rows are:
+`intent_classified` (scope-gate permitted) →
+eight `rule_skipped` rows at `pre_action_proposal` →
+`approval_signal` →
+two `rule_skipped` rows at `pre_execute` →
+`executed` (plus two `rule_skipped` rows at `audit_validation`).
+Out-of-scope requests short-circuit after the scope gate with a
+`rule_fired`-then-`unsupported` pair and never reach the main agent.
 
 ## Tests
 
@@ -124,15 +166,23 @@ uv run pytest tests/workflows/send_invoice/
 ```
 
 Uses `temporalio.testing.WorkflowEnvironment.start_time_skipping()` plus
-`AgentEnvironment` + `TestModel` so the agent loop runs against a
-canned JSON proposal — no OpenAI, no MCP subprocess. Coverage:
+`AgentEnvironment` + `TestModel`. `TestModel` is two-shot: the first
+response is the scope-gate classification, the second is the main
+agent's `InvoiceProposal`. No OpenAI, no MCP subprocess.
 
-- Happy path: invoice row + line items written; audit chain `proposal`
-  → `approval_signal` → `executed` with actor metadata.
-- Decline: audit chain ends `declined`; no row in `invoices`.
-- Approval timeout: audit chain ends `declined` with `reason=approval_timeout`.
-- Duplicate signal: second signal is logged once as
-  `duplicate_approval_signal` and ignored.
+Three layers of coverage:
+
+- `test_workflow.py` — orchestration with `COMPASS_POLICY_DISABLE=1`
+  (the in-process model never hits MCP, so the proposal-phase rules
+  would block every run). Verifies the audit chain
+  `intent_classified` → `approval_signal` → `executed` plus decline
+  / timeout / duplicate-signal variants.
+- `test_workflow_policy.py` — direct activity tests against real
+  `compass_test` Postgres, parametrized per BLOCK rule. Covers
+  input_validation, pre_action_proposal, pre_execute, audit_validation.
+- `test_scope_gate.py` — end-to-end workflow exercise of the
+  out-of-scope short-circuit with policy live, asserting the
+  `rule_fired` + terminal `unsupported` audit pair.
 
 The live OpenAI + MCP path is exercised by the demo above — not in CI.
 
@@ -144,9 +194,10 @@ From build-plan §Stage 4, marked with comments where they live:
    agent as `activity_as_tool`. The agent's tool surface is read-only
    (the `bank` MCP) — `workflows/send_invoice/workflow.py` top-of-file
    note.
-2. `evaluate_policy` distinguishes decision errors from engine /
-   infra errors. Stage 4's stub never throws decisions; the shape is
-   ready for Stage 5 to drop in real `PolicyDecisionError`.
+2. `evaluate_policy` distinguishes decision errors (non-retryable)
+   from engine / infra errors (retryable). Mapping happens at the
+   activity boundary; the engine itself raises `PolicyEngineError` /
+   `PolicyInfraError` with a positive `retryable` flag.
 3. `audit_log` writes are idempotent: `(workflow_run_id, sequence_no)`
    UNIQUE + `ON CONFLICT DO NOTHING`. `sequence_no` is a deterministic
    monotonic counter in workflow state. `event_kind` is **not** part

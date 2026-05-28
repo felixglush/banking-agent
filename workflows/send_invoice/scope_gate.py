@@ -18,6 +18,13 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from workflows.send_invoice.agents import DEFAULT_MODEL
 
+# The scope gate is a structured-classification task — strictly
+# smaller and cheaper than the main reasoning agent. v0.1 reuses the
+# main agent's default (gpt-4.1-mini) so adopters need configure only
+# one key; ``OPENAI_SCOPE_GATE_MODEL`` is the override seam for when a
+# distilled / faster classifier is wired in.
+DEFAULT_SCOPE_GATE_MODEL = DEFAULT_MODEL
+
 IntentLabel = Literal["send_invoice", "out_of_scope"]
 
 
@@ -73,6 +80,6 @@ def build_scope_gate_agent() -> Agent[None]:
         name="send_invoice_scope_gate",
         instructions=SCOPE_GATE_INSTRUCTIONS,
         output_type=IntentClassification,
-        model=os.environ.get("OPENAI_MODEL", DEFAULT_MODEL),
+        model=os.environ.get("OPENAI_SCOPE_GATE_MODEL", DEFAULT_SCOPE_GATE_MODEL),
         mcp_servers=[],
     )
