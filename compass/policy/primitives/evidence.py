@@ -9,19 +9,18 @@ Phase: pre_action_proposal.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, cast
 
 from compass.policy.paths import MISSING, resolve_dotted
 from compass.policy.registry import primitive
-from compass.policy.types import Violation
+from compass.policy.types import PolicyContext, Violation
 
 
 @primitive("require_evidence_citation")
 def require_evidence_citation(*, field: str):
     """Returns a predicate that fails if any inner list at field is empty."""
 
-    def check(ctx: Mapping[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         values = resolve_dotted(ctx, field)
         if values is MISSING:
             return Violation(

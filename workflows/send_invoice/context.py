@@ -20,10 +20,28 @@ from __future__ import annotations
 
 import hashlib
 import json
-from typing import Any, cast
+from typing import Any, TypedDict, cast
+
+from compass.policy import ToolCallRecord
 
 
-def extract_tool_calls(run_result: Any) -> list[dict[str, Any]]:
+class ResolvedEntities(TypedDict):
+    """The send-invoice projection of the agent's bank-MCP tool calls.
+
+    Workflow-specific: send-invoice cares about exactly these four
+    slots. Dispute-investigation (v0.2) will define its own analogous
+    TypedDict over a different MCP surface. None values denote
+    "agent did not query this entity"; ``rule_skipped`` is the
+    expected predicate behavior for those.
+    """
+
+    customer: dict[str, Any] | None
+    contract: dict[str, Any] | None
+    rate_card_entries: list[dict[str, Any]]
+    time_entries: list[dict[str, Any]]
+
+
+def extract_tool_calls(run_result: Any) -> list[ToolCallRecord]:
     """Return [{tool_name, args, result}, ...] for each tool call.
 
     The SDK emits a ``tool_call_item`` (with name+arguments on raw_item)
@@ -33,7 +51,7 @@ def extract_tool_calls(run_result: Any) -> list[dict[str, Any]]:
     cancelled) are dropped.
     """
     items: list[Any] = getattr(run_result, "new_items", None) or []
-    calls: dict[str, dict[str, Any]] = {}
+    calls: dict[str, ToolCallRecord] = {}
     order: list[str] = []
     for item in items:
         kind = getattr(item, "type", None)
@@ -66,7 +84,7 @@ def _attr_or_key(obj: Any, key: str) -> Any:
     return getattr(obj, key, None)
 
 
-def project_resolved_entities(tool_calls: list[dict[str, Any]]) -> dict[str, Any]:
+def project_resolved_entities(tool_calls: list[ToolCallRecord]) -> ResolvedEntities:
     """Reduce tool calls into the resolved-entities snapshot the rules use.
 
     The mapping from tool name → entity slot is closed-set. Adding a
@@ -74,25 +92,25 @@ def project_resolved_entities(tool_calls: list[dict[str, Any]]) -> dict[str, Any
     this function — that's intentional; the projection contract is
     workflow-specific.
     """
-    entities: dict[str, Any] = {
+    entities: ResolvedEntities = {
         "customer": None,
         "contract": None,
         "rate_card_entries": [],
         "time_entries": [],
     }
     for call in tool_calls:
-        name = call.get("tool_name")
-        result = call.get("result")
+        name = call["tool_name"]
+        result = call["result"]
         if name == "list_customers" and isinstance(result, list) and result:
-            entities["customer"] = result[0]
+            entities["customer"] = cast(list[dict[str, Any]], result)[0]
         elif name == "get_customer" and isinstance(result, dict):
-            entities["customer"] = result
+            entities["customer"] = cast(dict[str, Any], result)
         elif name == "get_active_contract" and isinstance(result, dict):
-            entities["contract"] = result
+            entities["contract"] = cast(dict[str, Any], result)
         elif name == "get_rate_card" and isinstance(result, dict):
-            entities["rate_card_entries"].append(result)
+            entities["rate_card_entries"].append(cast(dict[str, Any], result))
         elif name == "list_time_entries" and isinstance(result, list):
-            entities["time_entries"].extend(result)
+            entities["time_entries"].extend(cast(list[dict[str, Any]], result))
     return entities
 
 

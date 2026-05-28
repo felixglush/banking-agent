@@ -7,13 +7,18 @@ from typing import Any
 
 import pytest
 
-from compass.policy import Phase, evaluate
+from compass.policy import Phase, RuleFiredEvent, SinkEvent, evaluate
 from compass.policy.sink import InMemorySink
 from policies.send_invoice import RULES
 from tests.policies.conftest import (
     happy_input_validation_ctx,
     out_of_scope_input_validation_ctx,
 )
+
+
+def _only_fired(events: list[SinkEvent]) -> list[RuleFiredEvent]:
+    return [e for e in events if e["event_kind"] == "rule_fired"]
+
 
 # ---------------------------------------------------------------------
 # input_validation phase
@@ -44,7 +49,7 @@ async def test_input_validation_blocks_out_of_scope() -> None:
     )
     assert decision.permit is False
     assert decision.rule_ids_fired == ("intent_must_be_send_invoice",)
-    fired = [e for e in sink.events if e["event_kind"] == "rule_fired"]
+    fired = _only_fired(sink.events)
     assert len(fired) == 1
     assert fired[0]["rule_id"] == "intent_must_be_send_invoice"
     assert fired[0]["evidence"]["value"] == "out_of_scope"

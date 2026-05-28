@@ -14,7 +14,107 @@ import inspect
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal, TypedDict
+
+# ---------------------------------------------------------------------
+# Semantic aliases over open dict shapes
+# ---------------------------------------------------------------------
+#
+# These are not new types — they are *names* for shapes the codebase
+# already uses. Pyright treats them as the underlying ``Mapping`` /
+# ``dict``, so substitutability is unchanged. The benefit is at the
+# call site: a function signature that takes ``PolicyContext`` reads
+# very differently from one that takes ``Mapping[str, Any]``, even
+# though the runtime contract is identical.
+#
+# The shapes themselves are intentionally open. ``PolicyContext`` keys
+# are dotted-path-looked-up by primitive predicates (see
+# ``compass/policy/paths.py``) and vary by phase (see the per-phase
+# context blocks in the Stage-5 and Stage-6 design docs). Tightening
+# them to per-phase TypedDicts is a documented follow-up; the engine
+# API would have to thread phase identity through the type system,
+# which is a separate refactor.
+
+PolicyContext = Mapping[str, Any]
+"""What a predicate receives at evaluation time.
+
+Shape varies by phase. Predicates read fields via
+``compass.policy.paths.resolve_dotted`` against the dotted-path
+schemas documented in the design specs.
+"""
+
+ViolationEvidence = dict[str, Any]
+"""Rule-specific structured evidence carried on a Violation.
+
+JSON-serializable. Keys are rule-defined; readers (audit log,
+approval UI) treat them as opaque payloads.
+"""
+
+AuditPayload = dict[str, Any]
+"""JSON-serializable payload landing in ``audit_log.payload``.
+
+Free-form per event_kind. Stable conventions per event_kind are
+documented in build-plan §Database and the Stage-6 design.
+"""
+
+Actor = dict[str, Any]
+"""Verified human identity on an approval / executed / declined row.
+
+Keys: ``user_id``, optional ``role``, ``auth_method``, optional
+``mfa_verified``. Always None on rule_fired / rule_skipped events.
+"""
+
+
+class ToolCallRecord(TypedDict):
+    """One MCP / agent tool invocation as it appears in a policy context.
+
+    Produced by the workflow from the OpenAI Agents SDK's RunResult;
+    consumed by Evidence / Billing-integrity primitives and by the
+    audit_validation ``log_data_sources_consulted`` rule. The tool name
+    is the registered MCP tool id (e.g. ``"list_customers"``); args is
+    the JSON-decoded argument dict the agent passed; result is the
+    JSON-decoded tool output (shape varies per tool).
+    """
+
+    tool_name: str
+    args: dict[str, Any]
+    result: Any
+
+
+class RuleSkippedEvent(TypedDict):
+    """Engine emitted this event when a rule's predicate returned None.
+
+    Discriminator: ``event_kind == "rule_skipped"``.
+    """
+
+    event_kind: Literal["rule_skipped"]
+    rule_id: str
+    phase: str
+
+
+class RuleFiredEvent(TypedDict):
+    """Engine emitted this event when a rule's predicate returned a Violation.
+
+    Discriminator: ``event_kind == "rule_fired"``. Carries the full
+    violation context so audit and trace assertions don't need to join
+    back to source.
+    """
+
+    event_kind: Literal["rule_fired"]
+    rule_id: str
+    phase: str
+    decision: str
+    evidence: ViolationEvidence
+    message: str
+    regulatory_basis: list[str]
+
+
+SinkEvent = RuleFiredEvent | RuleSkippedEvent
+"""Discriminated union over the two event_kind values the engine emits.
+
+Narrow with ``if event["event_kind"] == "rule_fired":`` to access
+``evidence``, ``decision``, ``message``, ``regulatory_basis``.
+"""
 
 
 class Phase(StrEnum):
@@ -56,7 +156,7 @@ class Violation:
 
     rule_id: str
     message: str
-    evidence: dict[str, Any]
+    evidence: ViolationEvidence
 
 
 @dataclass(frozen=True)
@@ -76,7 +176,7 @@ class Decision:
 
 
 PredicateFn = Callable[
-    [Mapping[str, Any]],
+    [PolicyContext],
     Awaitable[Violation | None] | (Violation | None),
 ]
 
@@ -101,7 +201,7 @@ class Predicate:
     params: Mapping[str, Any]
     fn: PredicateFn
 
-    async def __call__(self, ctx: Mapping[str, Any]) -> Violation | None:
+    async def __call__(self, ctx: PolicyContext) -> Violation | None:
         result = self.fn(ctx)
         if inspect.isawaitable(result):
             return await result

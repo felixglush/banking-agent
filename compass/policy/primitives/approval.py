@@ -14,11 +14,8 @@ Phase: pre_execute.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
-
 from compass.policy.registry import primitive
-from compass.policy.types import Violation
+from compass.policy.types import PolicyContext, Violation
 
 
 @primitive("prohibit_silent_modification_after_confirmation")
@@ -32,7 +29,7 @@ def prohibit_silent_modification_after_confirmation():
     can edit the proposal.
     """
 
-    def check(ctx: Mapping[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         at_proposal = ctx.get("proposal_hash_at_proposal")
         current = ctx.get("__test_current_proposal_hash__") or ctx.get("current_proposal_hash")
         if at_proposal is None or current is None:
@@ -61,7 +58,7 @@ def prohibit_policy_drift_after_confirmation():
     BLOCK) — the human should re-approve, not silently get rejected.
     """
 
-    def check(ctx: Mapping[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         at_proposal = ctx.get("policy_hash_at_proposal")
         current = ctx.get("__test_current_policy_hash__") or ctx.get("current_policy_hash")
         if at_proposal is None or current is None:

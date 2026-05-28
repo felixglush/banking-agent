@@ -18,30 +18,32 @@ See spec §Sink for the architectural rationale.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
+
+from compass.policy.types import SinkEvent
 
 
 @runtime_checkable
 class Sink(Protocol):
     """One method: emit an event dict."""
 
-    async def emit(self, event: dict[str, Any]) -> None: ...
+    async def emit(self, event: SinkEvent) -> None: ...
 
 
 class InMemorySink:
     """Collect events in a list. Use in unit tests."""
 
     def __init__(self) -> None:
-        self.events: list[dict[str, Any]] = []
+        self.events: list[SinkEvent] = []
 
-    async def emit(self, event: dict[str, Any]) -> None:
+    async def emit(self, event: SinkEvent) -> None:
         self.events.append(event)
 
 
 class NullSink:
     """Drop events on the floor. Default when nothing is registered."""
 
-    async def emit(self, event: dict[str, Any]) -> None:
+    async def emit(self, event: SinkEvent) -> None:
         return None
 
 
@@ -51,7 +53,7 @@ class MultiSink:
     def __init__(self, sinks: Iterable[Sink]) -> None:
         self._sinks: list[Sink] = list(sinks)
 
-    async def emit(self, event: dict[str, Any]) -> None:
+    async def emit(self, event: SinkEvent) -> None:
         for sink in self._sinks:
             await sink.emit(event)
 

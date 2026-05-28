@@ -10,12 +10,9 @@ Phase: pre_action_proposal.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from typing import Any
-
 from compass.policy.paths import MISSING, resolve_dotted
 from compass.policy.registry import primitive
-from compass.policy.types import Violation
+from compass.policy.types import PolicyContext, Violation
 
 
 @primitive("require_existing_entity")
@@ -27,7 +24,7 @@ def require_existing_entity(*, field: str, entity_type: str):
     this primitive at v0.1; use a different primitive for those.
     """
 
-    def check(ctx: Mapping[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         value = resolve_dotted(ctx, field)
         if value is MISSING or value is None or value == {}:
             return Violation(

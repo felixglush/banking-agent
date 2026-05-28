@@ -33,7 +33,6 @@ docs/superpowers/specs/2026-05-27-stage-6-intent-classifier-design.md:
 """
 
 from datetime import timedelta
-from typing import Any
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -44,7 +43,7 @@ from temporalio.workflow import ActivityConfig
 with workflow.unsafe.imports_passed_through():
     from agents import Runner
 
-    from compass.policy import Phase
+    from compass.policy import Actor, AuditPayload, Phase, ToolCallRecord
     from workflows.send_invoice.activities import (
         AuditEvent,
         EvaluatePolicyInput,
@@ -77,7 +76,7 @@ class SendInvoiceWorkflow:
         self._next_seq = 0
         self._proposal_hash: str | None = None
         self._policy_hash: str | None = None
-        self._tool_calls: list[dict[str, Any]] = []
+        self._tool_calls: list[ToolCallRecord] = []
         self._reasoning_text: str = ""
 
     @workflow.signal(name="approve")
@@ -337,10 +336,10 @@ class SendInvoiceWorkflow:
         *,
         phase: str,
         event_kind: str,
-        payload: dict[str, object],
+        payload: AuditPayload,
         decision: str | None = None,
         rule_id: str | None = None,
-        actor: dict[str, object] | None = None,
+        actor: Actor | None = None,
         is_terminal_event: bool = False,
     ) -> None:
         seq = self._allocate_seq()

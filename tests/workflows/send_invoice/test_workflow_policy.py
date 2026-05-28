@@ -354,7 +354,9 @@ async def test_audit_validation_missing_policy_hash_emits_rule_fired() -> None:
             decision="permit",
             is_terminal_event=True,
             policy_hash_for_validation="",  # ← empty
-            tool_calls_for_validation=[{"tool_name": "list_customers"}],
+            tool_calls_for_validation=[
+                {"tool_name": "list_customers", "args": {}, "result": []},
+            ],
         )
     )
     rows = await _fetch_audit(run_id)

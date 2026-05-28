@@ -11,7 +11,7 @@ Multi-class at Stage 16: widen ``IntentLabel`` and update
 """
 
 import os
-from typing import Literal
+from typing import Literal, TypedDict
 
 from agents import Agent
 from pydantic import BaseModel, ConfigDict, Field
@@ -40,6 +40,19 @@ class IntentClassification(BaseModel):
 
     intent: IntentLabel
     confidence: float = Field(ge=0.0, le=1.0)
+    rationale: str
+
+
+class IntentClassificationDict(TypedDict):
+    """``IntentClassification.model_dump()`` form.
+
+    What the workflow passes to the policy engine as
+    ``context["classification"]``; what `intent_in_allowlist` reads
+    via the ``"classification.intent"`` dotted path.
+    """
+
+    intent: IntentLabel
+    confidence: float
     rationale: str
 
 

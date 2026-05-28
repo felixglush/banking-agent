@@ -13,12 +13,11 @@ those into the expected shape.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any, cast
 
 from compass.policy.paths import MISSING, resolve_dotted
 from compass.policy.registry import primitive
-from compass.policy.types import Violation
+from compass.policy.types import PolicyContext, Violation
 
 
 @primitive("require_amount_source")
@@ -31,7 +30,7 @@ def require_amount_source():
     """
     VALID = {"contract", "rate_card", "time_tracking", "user_specified"}
 
-    def check(ctx: Mapping[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         lines = resolve_dotted(ctx, "proposal.line_items")
         if lines is MISSING or not isinstance(lines, list):
             return Violation(
@@ -68,7 +67,7 @@ def contract_consistency_check():
     optional — if no contract was queried, the rule skips.
     """
 
-    def check(ctx: Mapping[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         contract = resolve_dotted(ctx, "resolved_entities.contract")
         if contract is MISSING or contract is None:
             return None
@@ -107,7 +106,7 @@ def prohibit_exceed_contract_cap():
     Other source types don't bill against the cap.
     """
 
-    def check(ctx: Mapping[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         contract = resolve_dotted(ctx, "resolved_entities.contract")
         if contract is MISSING or contract is None:
             return None
@@ -150,7 +149,7 @@ def currency_consistency_check():
     currency, fire.
     """
 
-    def check(ctx: Mapping[str, Any]) -> Violation | None:
+    def check(ctx: PolicyContext) -> Violation | None:
         proposal = resolve_dotted(ctx, "proposal")
         if proposal is MISSING:
             return None
