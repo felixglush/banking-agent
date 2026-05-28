@@ -983,6 +983,8 @@ def _generate_ground_truth(
         case = {
             "case_id": f"ir_{len(invoice_cases) + 1:04d}",
             "request": (f"Send invoice for {customer['name']} — source: {inv['source_type']}"),
+            "expected_outcome": "sent",
+            "expected_decline_reason": None,
             "expected": {
                 "customer_id": inv["customer_id"],
                 "source_type": inv["source_type"],
@@ -994,6 +996,65 @@ def _generate_ground_truth(
         invoice_cases.append(case)
         if len(invoice_cases) >= 120:
             break
+
+    # --- Decline cases (Stage 7) ---------------------------------------
+    # Clone every 5th sent case as a decline. Deterministic; non-overlapping
+    # with the four-amount-source headline slice because we pick from after
+    # case 30 (the headline slice is the first 30 by source-type ordering).
+    decline_reasons = (
+        "amount_too_high_for_approver",
+        "customer_on_hold",
+        "requested_clarification",
+    )
+    decline_seeds = [c for i, c in enumerate(invoice_cases) if i >= 30 and i % 5 == 0]
+    decline_seeds = decline_seeds[:24]  # 14 train + 10 holdout
+    for j, seed in enumerate(decline_seeds):
+        invoice_cases.append(
+            {
+                "case_id": f"ir_d_{j + 1:04d}",
+                "request": seed["request"],
+                "expected_outcome": "declined",
+                "expected_decline_reason": decline_reasons[j % len(decline_reasons)],
+                # kept for forward-compat; ignored at score time
+                "expected": dict(cast(dict[str, Any], seed["expected"])),
+            }
+        )
+
+    # --- Policy-rejected cases (Stage 7) -------------------------------
+    # One sub-case per Billing-integrity primitive so policy_compliance
+    # mechanically validates each rule rejects.
+    policy_reject_specs = [
+        (
+            "require_amount_source",
+            "Send invoice for Acme Corp without specifying a source",
+        ),
+        (
+            "contract_consistency_check",
+            "Send invoice for Acme Corp for $99999 cited to contract_NONEXISTENT",
+        ),
+        (
+            "prohibit_exceed_contract_cap",
+            "Bill Stark Industries $1,000,000 against their $100k cap contract",
+        ),
+        (
+            "currency_consistency_check",
+            "Send invoice for Acme Corp in EUR while their contract is USD",
+        ),
+    ]
+    # 10 train + 6 holdout = 16 total. Cycle through the 4 specs 4× = 16 cases.
+    for k in range(16):
+        rule_id, request = policy_reject_specs[k % len(policy_reject_specs)]
+        invoice_cases.append(
+            {
+                "case_id": f"ir_pr_{k + 1:04d}",
+                "request": request,
+                "expected_outcome": "policy_rejected",
+                "expected_decline_reason": None,
+                # consumed by the policy_compliance block below
+                "expected_fired_rule": rule_id,
+                "expected": {},  # ignored
+            }
+        )
 
     # --- Scope-gate labels -----------------------------------------
     in_scope = [
@@ -1030,6 +1091,8 @@ def _generate_ground_truth(
     # so the corpus is ready.
     policy_cases: list[dict[str, Any]] = []
     for case in invoice_cases:
+        if case.get("expected_outcome") == "policy_rejected":
+            continue  # handled separately below
         expected_rules: list[str] = [
             "intent_must_be_send_invoice",
             "require_amount_source",
@@ -1047,6 +1110,27 @@ def _generate_ground_truth(
                 "case_id": f"pc_{case['case_id']}",
                 "invoice_case_id": case["case_id"],
                 "expected_fired_rules": sorted(expected_rules),
+            }
+        )
+
+    # Stage 7: policy_rejected cases declare which Billing-integrity rule
+    # they intentionally trip. The framework-core rules always fire too.
+    for case in invoice_cases:
+        if case.get("expected_outcome") != "policy_rejected":
+            continue
+        pr_rules = sorted(
+            {
+                "intent_must_be_send_invoice",
+                "require_amount_source",
+                "currency_consistency_check",
+                cast(str, case["expected_fired_rule"]),
+            }
+        )
+        policy_cases.append(
+            {
+                "case_id": f"pc_{case['case_id']}",
+                "invoice_case_id": case["case_id"],
+                "expected_fired_rules": pr_rules,
             }
         )
 

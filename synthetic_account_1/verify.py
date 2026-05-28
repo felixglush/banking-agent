@@ -233,6 +233,32 @@ def check_ground_truth_invoice_refs(
             )
 
 
+def _verify_outcome_class_counts(ground_truth_dir: Path) -> None:
+    """Stage 7: per-outcome counts are pinned. A regression that flips
+    a sent case to declined fails this check."""
+    expected: dict[str, dict[str, int]] = {
+        "train": {"sent": 90, "declined": 11, "policy_rejected": 7},
+        "holdout": {"sent": 30, "declined": 7, "policy_rejected": 9},
+    }
+    for split, want in expected.items():
+        path = ground_truth_dir / split / "invoice_resolution_labels.jsonl"
+        cases = [
+            cast(dict[str, Any], json.loads(line))
+            for line in path.read_text().splitlines()
+            if line.strip()
+        ]
+        got: dict[str, int] = {}
+        for c in cases:
+            got[c["expected_outcome"]] = got.get(c["expected_outcome"], 0) + 1
+        for cls, n in want.items():
+            actual = got.get(cls, 0)
+            if actual != n:
+                raise VerifyError(
+                    f"verify: {split}/invoice_resolution_labels.jsonl outcome "
+                    f"'{cls}' has {actual} cases, expected {n}"
+                )
+
+
 # ---------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------
@@ -281,6 +307,10 @@ def verify_all() -> Summary:
             lambda: check_dispute_transaction_fk(disputes, transactions),
         ),
         ("ambiguous-name subset present", lambda: check_ambiguous_name_subset(customers)),
+        (
+            "ground_truth outcome counts pinned",
+            lambda: _verify_outcome_class_counts(GROUND_TRUTH),
+        ),
     ]
 
     # Ground-truth ref checks for both splits.
