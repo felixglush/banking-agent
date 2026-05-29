@@ -38,6 +38,15 @@ def require_amount_source():
                 message="proposal.line_items missing or not a list",
                 evidence={"reason": "missing_line_items"},
             )
+        if len(cast(list[Any], lines)) == 0:
+            # An invoice with no line items has no amount source at all — a
+            # degenerate/abstention proposal. Reject it (previously this
+            # vacuously passed, letting empty proposals through as 'sent').
+            return Violation(
+                rule_id="",
+                message="proposal has no line items",
+                evidence={"reason": "empty_line_items"},
+            )
         for i, line in enumerate(cast(list[dict[str, Any]], lines)):
             stype = line.get("source_type")
             if stype not in VALID:
@@ -53,6 +62,49 @@ def require_amount_source():
                     message=f"line {i} has empty source_refs",
                     evidence={"line_no": i},
                 )
+        return None
+
+    return check
+
+
+@primitive("require_contract_exists")
+def require_contract_exists():
+    """When the proposal names a contract, that contract must have been
+    resolved via MCP (and its id must match).
+
+    Catches agent-hallucinated contract ids — a proposal that cites a
+    contract the agent never looked up (so it may not exist) would
+    otherwise sail through policy and fail at the invoices.contract_id
+    foreign key in execute_send. This rule turns that into a clean
+    pre_action_proposal rejection. Skips when the proposal references no
+    contract (e.g. rate_card invoices have contract_id=None).
+    """
+
+    def check(ctx: PolicyContext) -> Violation | None:
+        contract_id = resolve_dotted(ctx, "proposal.contract_id")
+        if contract_id is MISSING or contract_id is None:
+            return None  # no contract referenced — nothing to verify
+        contract = resolve_dotted(ctx, "resolved_entities.contract")
+        if contract is MISSING or contract is None or contract == {}:
+            return Violation(
+                rule_id="",
+                message=f"proposal references contract {contract_id!r} but no contract was resolved",
+                evidence={"contract_id": contract_id, "reason": "unresolved"},
+            )
+        resolved_id = cast(dict[str, Any], contract).get("id")
+        if resolved_id != contract_id:
+            return Violation(
+                rule_id="",
+                message=(
+                    f"proposal references contract {contract_id!r} but the "
+                    f"resolved contract is {resolved_id!r}"
+                ),
+                evidence={
+                    "contract_id": contract_id,
+                    "resolved_id": resolved_id,
+                    "reason": "mismatch",
+                },
+            )
         return None
 
     return check

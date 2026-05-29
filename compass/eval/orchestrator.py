@@ -4,6 +4,7 @@ This file is intentionally thin: orchestration only. Scoring logic lives
 in suites/, storage in sources/, runner in runner.py.
 """
 
+import asyncio
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
 from typing import Any
@@ -37,6 +38,15 @@ class EvalReport:
     case_results: list[CaseResult]
 
 
+@dataclass
+class _CaseOutcome:
+    """One case's result, collected concurrently and aggregated in order."""
+    case: Case
+    result: CaseResult | None
+    suite_scores: list[tuple[str, bool, str]]  # (suite, passed, comment)
+    error: str | None  # workflow_error message when run_case raised
+
+
 async def run_eval(
     *,
     runner: WorkflowRunner,
@@ -52,6 +62,7 @@ async def run_eval(
     holdout_justification: str | None,
     host_git_dirty: bool,
     policy_enabled: bool = True,
+    concurrency: int = 1,
 ) -> EvalReport:
     run_id = await eval_run_store.allocate_run(
         git_sha=git_sha, mode=mode.value,
@@ -62,44 +73,74 @@ async def run_eval(
     summaries: dict[str, SuiteSummary] = {s: SuiteSummary() for s in suites}
     case_results: list[CaseResult] = []
 
-    for case in cases:
-        try:
-            result = await runner.run_case(case)
-        except Exception as e:
-            for s in suites:
-                summaries[s].fails += 1
-                summaries[s].failure_details.append(
-                    (case.case_id, f"workflow_error:{type(e).__name__}:{e}")
+    # Cases are independent (own workflow id, own trace, commutative score
+    # writes), so run up to `concurrency` at once. Per-case scoring + score
+    # writes happen inside the coroutine; aggregation into `summaries` is done
+    # afterward, in input order, so the report stays deterministic regardless
+    # of completion order.
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _process(case: Case) -> _CaseOutcome:
+        async with sem:
+            try:
+                result = await runner.run_case(case)
+            except Exception as e:
+                comment = f"workflow_error:{type(e).__name__}"
+                for s in suites:
+                    await score_sink.write_score(
+                        run_id=run_id, item_id=case.case_id,
+                        name=s, value=0.0, comment=comment,
+                    )
+                return _CaseOutcome(case=case, result=None, suite_scores=[],
+                                    error=f"{comment}:{e}")
+            persisted = (
+                await invoice_lookup(result.invoice_id)
+                if result.invoice_id is not None else None
+            )
+            suite_scores: list[tuple[str, bool, str]] = []
+            for suite in suites:
+                score = await _run_suite(
+                    suite=suite, case=case, result=result,
+                    persisted=persisted, rule_fire_source=rule_fire_source,
+                    langfuse_client=langfuse_client,
                 )
                 await score_sink.write_score(
                     run_id=run_id, item_id=case.case_id,
-                    name=s, value=0.0,
-                    comment=f"workflow_error:{type(e).__name__}",
+                    name=suite, value=1.0 if score.passed else 0.0,
+                    comment=score.comment or None,
+                    trace_id=result.trace_id,
                 )
+                suite_scores.append((suite, score.passed, score.comment))
+            return _CaseOutcome(case=case, result=result,
+                                suite_scores=suite_scores, error=None)
+
+    outcomes = await asyncio.gather(*(_process(c) for c in cases))
+
+    for oc in outcomes:
+        if oc.error is not None:
+            for s in suites:
+                summaries[s].fails += 1
+                summaries[s].failure_details.append((oc.case.case_id, oc.error))
             continue
-        case_results.append(result)
-
-        persisted = (
-            await invoice_lookup(result.invoice_id)
-            if result.invoice_id is not None else None
-        )
-
-        for suite in suites:
-            score = await _run_suite(
-                suite=suite, case=case, result=result,
-                persisted=persisted, rule_fire_source=rule_fire_source,
-                langfuse_client=langfuse_client,
-            )
-            if score.passed:
+        assert oc.result is not None
+        case_results.append(oc.result)
+        for suite, passed, comment in oc.suite_scores:
+            if passed:
                 summaries[suite].passes += 1
             else:
                 summaries[suite].fails += 1
-                summaries[suite].failure_details.append((case.case_id, score.comment))
-            await score_sink.write_score(
-                run_id=run_id, item_id=case.case_id,
-                name=suite, value=1.0 if score.passed else 0.0,
-                comment=score.comment or None,
-            )
+                summaries[suite].failure_details.append((oc.case.case_id, comment))
+
+    # Run-level aggregate scores: each suite's pass rate, anchored to the
+    # dataset run so the Experiments view shows the run's headline
+    # performance (per-case scores live on the individual traces).
+    for suite, summary in summaries.items():
+        total = summary.passes + summary.fails
+        rate = summary.passes / total if total else 0.0
+        await score_sink.write_run_score(
+            run_id=run_id, name=suite, value=rate,
+            comment=f"{summary.passes}/{total} passed",
+        )
 
     await eval_run_store.finalize(run_id)
     return EvalReport(

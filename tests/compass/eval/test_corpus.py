@@ -14,14 +14,16 @@ GROUND_TRUTH = REPO_ROOT / "synthetic_account_1" / "ground_truth"
 def test_load_train_corpus():
     cases = load_corpus(workflow="send_invoice", mode=Mode.train,
                         ground_truth_root=GROUND_TRUTH)
-    assert len(cases) == 108
+    assert len(cases) == 119
     assert {c.expected_outcome for c in cases} == {"sent", "declined", "policy_rejected"}
+    # Clarification round-trip cases are 'sent' but carry a clarify_answer.
+    assert any(c.clarify_answer for c in cases)
 
 
 def test_load_holdout_corpus():
     cases = load_corpus(workflow="send_invoice", mode=Mode.holdout,
                         ground_truth_root=GROUND_TRUTH)
-    assert len(cases) == 46
+    assert len(cases) == 51
 
 
 def test_holdout_chroot_train_mode_refuses_holdout_path(tmp_path: Path):

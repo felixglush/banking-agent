@@ -54,5 +54,6 @@ def load_corpus(
             expected=cast(dict[str, Any], row.get("expected", {})),
             expected_fired_rules=rules_by_case.get(cast(str, row["case_id"]), []),
             expected_decline_reason=cast("str | None", row.get("expected_decline_reason")),
+            clarify_answer=cast("str | None", row.get("clarify_answer")),
         ))
     return cases

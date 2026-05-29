@@ -2,10 +2,11 @@
 carries the numbers. Optional warning thresholds in run_config.yaml
 trigger warning lines in the run summary; never pass/fail.
 
-Trace lookup: the workflow's worker tags every Langfuse trace with
-``wf:<workflow_run_id>`` (see workflows.send_invoice.activities.
-_enrich_langfuse_trace). The suite searches by that tag, picks the
-most recent match, then reads its aggregates.
+Trace lookup: when the runner seeded a deterministic trace id
+(``result.trace_id``), the suite fetches that trace directly. Otherwise it
+falls back to the ``wf:<workflow_run_id>`` tag the worker sets on every
+trace (see workflows.send_invoice.activities._enrich_langfuse_trace),
+picking the most recent match. Either way it then reads the aggregates.
 """
 
 from typing import Any, cast
@@ -21,18 +22,23 @@ async def score_cost_latency(
     langfuse_client: Any,
 ) -> SuiteScore:
     try:
-        traces = langfuse_client.api.trace.list(
-            tags=[f"wf:{result.workflow_run_id}"],
-            limit=1,
-        )
+        if result.trace_id is not None:
+            # Deterministic id seeded by the runner — direct lookup, no tag scan.
+            trace: Any = langfuse_client.api.trace.get(result.trace_id)
+        else:
+            traces = langfuse_client.api.trace.list(
+                tags=[f"wf:{result.workflow_run_id}"],
+                limit=1,
+            )
+            matches = cast(list[Any], getattr(traces, "data", None) or [])
+            if not matches:
+                return SuiteScore(passed=True, comment="trace_not_ingested")
+            trace = matches[0]
     except Exception:
         return SuiteScore(passed=True, comment="trace_not_ingested")
 
-    matches = cast(list[Any], getattr(traces, "data", None) or [])
-    if not matches:
+    if trace is None:
         return SuiteScore(passed=True, comment="trace_not_ingested")
-
-    trace: Any = matches[0]
     cost = cast(float | None, getattr(trace, "total_cost", None))
     latency_s = cast(float | None, getattr(trace, "latency", None))
     tokens = cast(int | None, getattr(trace, "total_tokens", None))

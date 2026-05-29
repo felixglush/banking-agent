@@ -163,7 +163,7 @@ async def test_happy_proposal_permits_and_writes_snapshot() -> None:
     assert out.rule_ids_fired == []
     assert out.escalations == []
     assert out.policy_hash == hash_rules(RULES)
-    assert out.next_sequence_no == 9  # 8 pre_action_proposal rule_skipped events + 1
+    assert out.next_sequence_no == 10  # 9 pre_action_proposal rule_skipped events + 1
 
     rows = await _fetch_audit(run_id)
     assert all(r["event_kind"] == "rule_skipped" for r in rows)
@@ -173,6 +173,7 @@ async def test_happy_proposal_permits_and_writes_snapshot() -> None:
         "invoice_amount_cap",
         "require_amount_source",
         "require_evidence_citation",
+        "contract_must_exist",
         "contract_consistency",
         "prohibit_exceed_contract_cap",
         "currency_consistency",

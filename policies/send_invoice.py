@@ -8,8 +8,8 @@ Rule ids are stable identifiers — they appear in audit_log.rule_id
 and in historic queries. Renaming an in-use id breaks audit reads;
 treat ids as append-only.
 
-Thirteen rules total: nine framework-core primitives (including the
-Stage-6 scope-gate ``intent_in_allowlist``) plus four app-specific
+Fourteen rules total: nine framework-core primitives (including the
+Stage-6 scope-gate ``intent_in_allowlist``) plus five app-specific
 Billing integrity primitives. Every Billing integrity rule and the
 scope-gate rule carry ``must_be_covered=True`` so Stage 10's CI gate
 catches dead-code regressions in those families.
@@ -38,6 +38,7 @@ from workflows.send_invoice.primitives import (
     currency_consistency_check,
     prohibit_exceed_contract_cap,
     require_amount_source,
+    require_contract_exists,
 )
 
 RULES: list[Rule] = [
@@ -100,6 +101,14 @@ RULES: list[Rule] = [
         ),
         regulatory_basis=("internal SOP-BILL-02",),
         tags=("billing_integrity", "evidence"),
+        must_be_covered=True,
+    ),
+    Rule(
+        id="contract_must_exist",
+        phase=Phase.pre_action_proposal,
+        predicate=require_contract_exists(),
+        regulatory_basis=("internal SOP-BILL-03",),
+        tags=("billing_integrity", "resolution"),
         must_be_covered=True,
     ),
     Rule(

@@ -32,7 +32,21 @@ class ScoreSink(Protocol):
         name: str,
         value: float,
         comment: str | None,
+        trace_id: str | None = None,
     ) -> None: ...
+
+    async def write_run_score(
+        self,
+        *,
+        run_id: str,
+        name: str,
+        value: float,
+        comment: str | None,
+    ) -> None:
+        """Run-level aggregate score (e.g. a suite's pass rate). Anchored to
+        the run itself so it surfaces as the run's headline performance, not
+        on any single case. Default no-op for sinks without a run concept."""
+        ...
 
 
 @runtime_checkable

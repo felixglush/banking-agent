@@ -50,6 +50,13 @@ class InvoiceProposal(BaseModel):
     contract_id: str | None = None
     line_items: list[LineItemProposal]
     notes: str | None = None
+    # Clarification path: set when the request is genuinely ambiguous given
+    # the available data (e.g. several billable periods/services match and the
+    # request doesn't say which). The agent asks instead of guessing; the
+    # workflow then returns outcome="needs_clarification" and skips policy.
+    # When True, the other fields are placeholders and line_items may be empty.
+    needs_clarification: bool = False
+    clarification_question: str | None = None
 
 
 class SendInvoiceRequest(BaseModel):
@@ -58,6 +65,32 @@ class SendInvoiceRequest(BaseModel):
     user_message: str
     # 1-hour default; overridable per request.
     approval_timeout_seconds: int = 3600
+    # ---- ablation levers (carried through the workflow boundary so the
+    # deterministic workflow doesn't read env) ----
+    # Agent prompt: "fixed" (default) vs "legacy" (the abstention-prone prompt).
+    prompt_variant: Literal["fixed", "legacy"] = "fixed"
+    # Give the agent the compute_invoice_total tool.
+    use_invoice_tool: bool = False
+    # Self-healing: on a pre_action_proposal policy block, feed the violation
+    # back to the agent and retry up to this many extra attempts (0 = off).
+    self_heal_max_attempts: int = 0
+    # Clarification round-trip: when the agent asks (needs_clarification), the
+    # workflow waits for a `clarify` signal with the answer. None (the default)
+    # means wait indefinitely — a human gets unlimited time to answer. A bound
+    # is opt-in (the eval harness sets one so an over-clarifying agent fails
+    # fast instead of hanging the run); on bound expiry the workflow returns
+    # needs_clarification terminally.
+    clarification_timeout_seconds: int | None = None
+
+
+class ClarificationResponse(BaseModel):
+    """Payload of the ``clarify`` workflow signal — the caller's answer to the
+    agent's clarification question."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str
+    responder_id: str
 
 
 class ApprovalDecision(BaseModel):
@@ -87,7 +120,9 @@ class PolicyDecisionPayload(BaseModel):
     next_sequence_no: int
 
 
-WorkflowOutcome = Literal["sent", "policy_rejected", "declined", "timeout", "unsupported"]
+WorkflowOutcome = Literal[
+    "sent", "policy_rejected", "declined", "timeout", "unsupported", "needs_clarification"
+]
 
 
 class WorkflowResult(BaseModel):

@@ -233,12 +233,67 @@ def check_ground_truth_invoice_refs(
             )
 
 
+def check_sent_declined_customers_verified(
+    cases: list[dict[str, Any]], customers: list[dict[str, Any]], context: str
+) -> None:
+    """A 'sent'/'declined' case must use a KYC-verified customer.
+
+    customer_kyc_verified (BLOCK + must_be_covered) rejects any non-verified
+    customer, so a 'sent'/'declined' label on one is mislabeled — the real
+    outcome would be policy_rejected. Regression guard for the corpus bug the
+    eval harness surfaced (Stage 7)."""
+    kyc = {c["id"]: c["kyc_status"] for c in customers}
+    for case in cases:
+        if case.get("expected_outcome") not in ("sent", "declined"):
+            continue
+        expected = case.get("expected")
+        if not isinstance(expected, dict):
+            continue
+        cid = cast(dict[str, Any], expected).get("customer_id")
+        if cid is not None and kyc.get(cid) != "verified":
+            raise VerifyError(
+                f"{context}: {case.get('expected_outcome')} case {case.get('case_id')} "
+                f"uses customer {cid} with kyc_status={kyc.get(cid)!r} — policy would reject it"
+            )
+
+
+def check_sent_totals_are_real_invoices(
+    cases: list[dict[str, Any]], invoices: list[dict[str, Any]], context: str
+) -> None:
+    """Every 'sent' case's expected total must be a real seed invoice for that
+    customer — i.e. the answer is achievable from the data, not invented. The
+    request names the unique basis (see simulate._generate_ground_truth), so
+    exactly one invoice is the correct answer."""
+    by_cust: dict[str, set[int]] = {}
+    for inv in invoices:
+        by_cust.setdefault(cast(str, inv["customer_id"]), set()).add(int(inv["total_cents"]))
+    for case in cases:
+        if case.get("expected_outcome") != "sent":
+            continue
+        exp = case.get("expected")
+        if not isinstance(exp, dict):
+            continue
+        exp_d = cast(dict[str, Any], exp)
+        cid = cast("str | None", exp_d.get("customer_id"))
+        total = exp_d.get("total_cents")
+        if cid is None or total is None:
+            raise VerifyError(f"{context}: sent case {case.get('case_id')} missing customer/total")
+        if int(total) not in by_cust.get(cid, set()):
+            raise VerifyError(
+                f"{context}: sent case {case.get('case_id')} expected total {total} "
+                f"is not a real invoice for {cid} — unreproducible ground truth"
+            )
+
+
 def _verify_outcome_class_counts(ground_truth_dir: Path) -> None:
     """Stage 7: per-outcome counts are pinned. A regression that flips
     a sent case to declined fails this check."""
+    # 'sent' includes the clarification round-trip cases (generic request +
+    # clarify_answer → the agent asks, gets the answer, then drafts the one
+    # specific invoice). They carry expected_outcome="sent".
     expected: dict[str, dict[str, int]] = {
-        "train": {"sent": 90, "declined": 11, "policy_rejected": 7},
-        "holdout": {"sent": 30, "declined": 7, "policy_rejected": 9},
+        "train": {"sent": 96, "declined": 10, "policy_rejected": 13},
+        "holdout": {"sent": 40, "declined": 8, "policy_rejected": 3},
     }
     for split, want in expected.items():
         path = ground_truth_dir / split / "invoice_resolution_labels.jsonl"
@@ -337,6 +392,22 @@ def verify_all() -> Summary:
                     (
                         f"ground_truth {ctx}: invoice FKs",
                         lambda cases=cases, ctx=ctx: check_ground_truth_invoice_refs(
+                            cases, invoices, ctx
+                        ),
+                    )
+                )
+                checks.append(
+                    (
+                        f"ground_truth {ctx}: sent/declined customers KYC-verified",
+                        lambda cases=cases, ctx=ctx: check_sent_declined_customers_verified(
+                            cases, customers, ctx
+                        ),
+                    )
+                )
+                checks.append(
+                    (
+                        f"ground_truth {ctx}: sent totals are real invoices",
+                        lambda cases=cases, ctx=ctx: check_sent_totals_are_real_invoices(
                             cases, invoices, ctx
                         ),
                     )

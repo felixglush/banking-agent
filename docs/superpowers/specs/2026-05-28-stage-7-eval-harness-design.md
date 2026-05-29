@@ -71,28 +71,42 @@ ship — Stage 7 does **not** pre-decide those shapes.
 
 ### Data flow per case
 
-1. Harness loads case from the corpus, respecting `--mode`.
-2. Creates or reuses a Langfuse Dataset Run; adds the case as a Dataset Item
-   if not already present.
-3. `runner.run_case(case)` calls `client.execute_workflow(SendInvoiceWorkflow,
-   ..., id=<workflow_run_id>)`. If `case.expected_outcome in {sent, declined}`,
-   the runner sends an `approve` signal after `start_workflow` returns (signals
-   buffer against the workflow id until the workflow consumes them, so order
-   is safe by construction). Awaits `handle.result()`.
-4. Each suite scores the case independently:
+1. Harness loads case from the corpus, respecting `--mode`. On start it
+   upserts the corpus into a Langfuse Dataset (`send_invoice_v0_1`), one
+   Dataset Item per case (`id = case_id`, `input` the request,
+   `expected_output` the ground truth).
+2. The runner computes the case's Langfuse trace id deterministically —
+   `Langfuse.create_trace_id(seed=<workflow_run_id>)` — and opens a root
+   Langfuse observation carrying that trace id before driving the workflow.
+3. `runner.run_case(case)` calls `client.start_workflow(SendInvoiceWorkflow,
+   ..., id=<workflow_run_id>)` inside that observation. If
+   `case.expected_outcome in {sent, declined}`, the runner sends an `approve`
+   signal after `start_workflow` returns (signals buffer against the workflow
+   id until the workflow consumes them, so order is safe by construction).
+   Awaits `handle.result()`.
+4. The first score for a case lazily creates a Langfuse DatasetRunItem
+   (`run_name = eval_runs.run_id`, `dataset_item_id = case_id`, `trace_id`),
+   linking the trace into the Dataset Run.
+5. Each suite scores the case independently:
    * `functional` compares the returned `WorkflowResult` (and, for `sent`
      cases, the persisted invoice row) against `case.expected`.
    * `policy_compliance` queries `audit_log` for `rule_fired` rows keyed on
      `workflow_run_id`.
-   * `cost_latency` reads token / latency aggregates from the Langfuse trace.
-5. Each suite's score is written as a Langfuse Dataset Run score on the
-   per-item trace (`name=<suite>`, `value=0.0|1.0`, `comment=` failure detail).
+   * `cost_latency` reads token / latency aggregates from the Langfuse trace
+     (fetched directly by the deterministic trace id).
+6. Each suite's score is written anchored to the case's `trace_id` (and the
+   Dataset Run), so it surfaces under the run in the Experiments UI
+   (`name=<suite>`, `value=0.0|1.0`, `comment=` failure detail).
 
 `workflow_run_id` is the join key everywhere: Postgres stores it on
-`audit_log` rows; Langfuse uses it as the trace id by construction (the
-OpenAI Agents plugin propagates `workflow.info().workflow_id` as the OTel
-trace id — already wired and in production via the Tier 1/2 Langfuse work
-landed alongside this spec).
+`audit_log` rows, and the Langfuse trace id is derived from it by seeding —
+`Langfuse.create_trace_id(seed=workflow_run_id)`. The runner is the trace
+root: Temporal's client-side OpenTelemetry interceptor (installed by adding
+`OpenTelemetryPlugin` to the harness client) injects the runner observation's
+span context into the workflow headers, and the worker — which already
+propagates incoming context — adopts it, so every worker span shares the
+seeded trace id. The harness therefore recomputes the trace id from
+`workflow_run_id` with no tag lookup and no wait for trace ingestion.
 
 ### Why this shape
 

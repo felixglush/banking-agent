@@ -26,20 +26,20 @@ def test_train_has_expected_outcome_field() -> None:
 def test_train_outcome_counts() -> None:
     """Pinned counts from the deterministic ``random.Random(0xC0FFEE)`` shuffle.
 
-    Inputs to ``_generate_ground_truth``: 120 sent + 18 declined + 16
-    policy_rejected = 154 invoice cases. ``_split`` shuffles indices, slices
-    the first ``int(154 * 0.30) = 46`` into holdout, the rest into train.
-    The shuffle distributes outcomes as recorded below; flipping any case
+    Cases: uniquely-answerable ``sent`` (request names the billable basis) +
+    ``needs_clarification`` (generic request, multiple invoices of that
+    source_type) + cloned ``declined`` + ``policy_rejected``. Flipping any case
     type fails this check (and ``verify.py``).
     """
     cases = _load(GROUND_TRUTH / "train" / "invoice_resolution_labels.jsonl")
     by_outcome: dict[str, int] = {}
     for c in cases:
         by_outcome[c["expected_outcome"]] = by_outcome.get(c["expected_outcome"], 0) + 1
-    assert by_outcome["sent"] == 90
-    assert by_outcome["declined"] == 11
-    assert by_outcome["policy_rejected"] == 7
-    assert sum(by_outcome.values()) == 108
+    assert by_outcome["sent"] == 96  # includes 11 clarification round-trip cases
+    assert by_outcome["declined"] == 10
+    assert by_outcome["policy_rejected"] == 13
+    assert sum(by_outcome.values()) == 119
+    assert sum(1 for c in cases if c.get("clarify_answer")) == 11
 
 
 def test_holdout_outcome_counts() -> None:
@@ -48,10 +48,11 @@ def test_holdout_outcome_counts() -> None:
     by_outcome: dict[str, int] = {}
     for c in cases:
         by_outcome[c["expected_outcome"]] = by_outcome.get(c["expected_outcome"], 0) + 1
-    assert by_outcome["sent"] == 30
-    assert by_outcome["declined"] == 7
-    assert by_outcome["policy_rejected"] == 9
-    assert sum(by_outcome.values()) == 46
+    assert by_outcome["sent"] == 40  # includes 5 clarification round-trip cases
+    assert by_outcome["declined"] == 8
+    assert by_outcome["policy_rejected"] == 3
+    assert sum(by_outcome.values()) == 51
+    assert sum(1 for c in cases if c.get("clarify_answer")) == 5
 
 
 def test_declined_cases_have_decline_reason() -> None:

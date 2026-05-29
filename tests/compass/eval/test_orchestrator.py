@@ -64,6 +64,49 @@ async def test_runs_each_case_through_each_suite():
     assert score_sink.write_score.await_count == 4
 
 
+async def test_concurrency_runs_parallel_and_aggregates_in_order():
+    import asyncio  # noqa: PLC0415
+
+    cases = [_case(f"ir_{i:03d}") for i in range(6)]
+    active = 0
+    max_active = 0
+
+    async def run_case(case: Case) -> CaseResult:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        await asyncio.sleep(0.02)  # hold the slot so overlap is observable
+        active -= 1
+        return CaseResult(case_id=case.case_id, workflow_run_id=f"wf-{case.case_id}",
+                          outcome="sent", invoice_id=f"inv-{case.case_id}", detail=None)
+
+    runner = AsyncMock()
+    runner.run_case = AsyncMock(side_effect=run_case)
+    rule_src = AsyncMock(); rule_src.rule_ids_fired = AsyncMock(return_value={"A"})
+    score_sink = AsyncMock()
+    eval_store = AsyncMock()
+    eval_store.allocate_run = AsyncMock(return_value="ev_test")
+    eval_store.finalize = AsyncMock()
+    invoice_lookup = AsyncMock(return_value={
+        "customer_id": "c1", "contract_id": None, "currency": "USD",
+        "source_type": "rate_card", "total_cents": 100,
+    })
+
+    report = await run_eval(
+        runner=runner, cases=cases, suites=["functional"], mode=Mode.train,
+        git_sha="abc", rule_fire_source=rule_src, score_sink=score_sink,
+        eval_run_store=eval_store, langfuse_client=MagicMock(),
+        invoice_lookup=invoice_lookup, holdout_justification=None,
+        host_git_dirty=False, concurrency=3,
+    )
+
+    assert max_active > 1, "cases did not run concurrently"
+    assert max_active <= 3, "exceeded the concurrency cap"
+    assert report.suite_summaries["functional"].passes == 6
+    # Aggregation order follows input order regardless of completion order.
+    assert [r.case_id for r in report.case_results] == [c.case_id for c in cases]
+
+
 async def test_failures_do_not_abort():
     cases = [_case("ir_001"), _case("ir_002", outcome="sent")]
     runner = AsyncMock()

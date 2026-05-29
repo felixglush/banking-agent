@@ -12,11 +12,12 @@ Exit codes:
 
 import argparse
 import asyncio
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from compass.eval.orchestrator import EvalReport
 
@@ -41,6 +42,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="send-invoice",
         help="Temporal task queue the workflow worker polls.",
     )
+    p.add_argument(
+        "--dataset-name",
+        default=None,
+        help="Langfuse dataset name. Defaults to ground_truth/"
+             "dataset_manifest.json's name (written by simulate.py "
+             "--dataset-name), else <workflow>_v0_1.",
+    )
     p.add_argument("--ablation", action="store_true",
                    help="run twice: policy on then off, link via paired_run_id")
     p.add_argument("--holdout-justification", default=None,
@@ -49,6 +57,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help="override holdout budget in USD")
     p.add_argument("--no-confirm", action="store_true",
                    help="skip interactive holdout-mode confirmation")
+    p.add_argument("--concurrency", type=int, default=4,
+                   help="max cases run in parallel (default 4; cases are "
+                        "independent). Raise for speed, lower to ease load on "
+                        "the worker / OpenAI rate limits.")
+    # ---- agent ablation levers (passed into each SendInvoiceRequest) ----
+    p.add_argument("--prompt-variant", choices=["fixed", "legacy"], default="fixed",
+                   help="agent prompt: 'fixed' (default) or 'legacy' "
+                        "(abstention-prone baseline).")
+    p.add_argument("--invoice-tool", action="store_true",
+                   help="give the agent the compute_invoice_total tool.")
+    p.add_argument("--self-heal-attempts", type=int, default=0,
+                   help="on a pre_action_proposal policy block, feed the "
+                        "violation back to the agent and retry up to N times "
+                        "(0 = off).")
     return p
 
 
@@ -68,6 +90,18 @@ def validate_args(ns: argparse.Namespace) -> None:
             print("ERROR: --mode=holdout requires --holdout-justification",
                   file=sys.stderr)
             sys.exit(2)
+
+
+def _resolve_dataset_name(ns: argparse.Namespace, ground_truth_root: Path) -> str:
+    """--dataset-name override → manifest label → <workflow>_v0_1 default."""
+    if ns.dataset_name:
+        return cast(str, ns.dataset_name)
+    manifest = ground_truth_root / "dataset_manifest.json"
+    if manifest.exists():
+        name = json.loads(manifest.read_text()).get("dataset_name")
+        if name:
+            return cast(str, name)
+    return f"{ns.workflow}_v0_1"
 
 
 def _git_sha() -> str:
@@ -98,6 +132,7 @@ async def amain(argv: list[str]) -> int:
     # Lazy imports so CLI parsing tests don't pay for them
     from langfuse import get_client  # noqa: PLC0415
     from temporalio.client import Client  # noqa: PLC0415
+    from temporalio.contrib.opentelemetry import OpenTelemetryPlugin  # noqa: PLC0415
 
     from compass.eval import (  # noqa: PLC0415
         LangfuseDatasetScoreSink,
@@ -116,8 +151,10 @@ async def amain(argv: list[str]) -> int:
     mode = Mode(ns.mode)
     suites = [s.strip() for s in ns.suites.split(",") if s.strip()]
 
-    cases = load_corpus(workflow=ns.workflow, mode=mode,
-                        ground_truth_root=ground_truth_root)
+    # Full corpus backs the Langfuse Dataset; --cases only subsets what runs.
+    corpus = load_corpus(workflow=ns.workflow, mode=mode,
+                         ground_truth_root=ground_truth_root)
+    cases = corpus
     if ns.cases:
         wanted = set(ns.cases.split(","))
         cases = [c for c in cases if c.case_id in wanted]
@@ -143,14 +180,29 @@ async def amain(argv: list[str]) -> int:
                 return 0
 
     temporal_target = os.environ.get("TEMPORAL_TARGET", "localhost:7233")
-    temporal_client = await Client.connect(temporal_target)
-    runner = TemporalWorkflowRunner(client=temporal_client, task_queue=ns.task_queue)
+    # The OpenTelemetry plugin installs the client-side interceptor that
+    # injects the active span context into workflow headers — that is what
+    # propagates the runner's deterministic trace id into the worker's trace.
+    temporal_client = await Client.connect(
+        temporal_target, plugins=[OpenTelemetryPlugin()],
+    )
+    runner = TemporalWorkflowRunner(
+        client=temporal_client, task_queue=ns.task_queue,
+        langfuse_client=langfuse_client,
+        prompt_variant=cast(Literal["fixed", "legacy"], ns.prompt_variant),
+        use_invoice_tool=ns.invoice_tool,
+        self_heal_max_attempts=ns.self_heal_attempts,
+    )
 
     rule_src = PostgresAuditLogSource(dsn=dsn)
     eval_store = PostgresEvalRunStore(dsn=dsn)
     score_sink = LangfuseDatasetScoreSink(
-        client=langfuse_client, dataset_name=f"{ns.workflow}_v0_1",
+        client=langfuse_client,
+        dataset_name=_resolve_dataset_name(ns, ground_truth_root),
     )
+    # Upload the full corpus as a Langfuse Dataset once (items upsert on
+    # case_id); --cases narrows only what runs, not what the dataset holds.
+    await score_sink.ensure_dataset(corpus)
 
     async def invoice_lookup(invoice_id: str) -> dict[str, Any] | None:
         import psycopg  # noqa: PLC0415
@@ -184,6 +236,7 @@ async def amain(argv: list[str]) -> int:
                 holdout_justification=ns.holdout_justification,
                 host_git_dirty=_git_dirty(),
                 policy_enabled=True,
+                concurrency=ns.concurrency,
             )
             os.environ["COMPASS_POLICY_DISABLE"] = "1"
             try:
@@ -196,6 +249,7 @@ async def amain(argv: list[str]) -> int:
                     holdout_justification=ns.holdout_justification,
                     host_git_dirty=_git_dirty(),
                     policy_enabled=False,
+                    concurrency=ns.concurrency,
                 )
             finally:
                 os.environ.pop("COMPASS_POLICY_DISABLE", None)
@@ -211,10 +265,15 @@ async def amain(argv: list[str]) -> int:
                 invoice_lookup=invoice_lookup,
                 holdout_justification=ns.holdout_justification,
                 host_git_dirty=_git_dirty(),
+                concurrency=ns.concurrency,
             )
     except HoldoutCapExceeded as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 3
+    finally:
+        # Export the root observations, dataset run items, and scores
+        # buffered during the run before the process exits.
+        langfuse_client.flush()
 
     print(f"\ncompass.eval run_id={report.run_id} mode={mode.value}")
     any_fail = False
