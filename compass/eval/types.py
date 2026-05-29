@@ -55,6 +55,17 @@ class CaseResult:
 
 
 @dataclass(frozen=True)
+class AdversarialCaseResult:
+    case_id: str
+    category: str
+    attack: str
+    repelled: bool
+    expected_rule_fired: bool
+    trace_id: str | None
+    workflow_run_id: str | None
+
+
+@dataclass(frozen=True)
 class ProbeResult:
     """Outcome of driving one adversarial attack to the pre_action_proposal gate.
 
