@@ -1,0 +1,9 @@
+{
+  "name": "banking-agent-redteam",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Promptfoo red-team CLI for the send-invoice adversarial eval (Stage 8).",
+  "dependencies": {
+    "promptfoo": "0.121.13"
+  }
+}
