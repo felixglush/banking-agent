@@ -36,6 +36,7 @@ from workflows.send_invoice.activities import (
     audit_log,
     evaluate_policy,
     execute_send,
+    resolve_customer_contract,
 )
 from workflows.send_invoice.sandbox import build_sandboxed_runner
 from workflows.send_invoice.workflow import SendInvoiceWorkflow
@@ -133,7 +134,7 @@ async def worker(temporal_client: Client) -> AsyncIterator[Worker]:
         temporal_client,
         task_queue=TASK_QUEUE,
         workflows=[SendInvoiceWorkflow],
-        activities=[evaluate_policy, execute_send, audit_log],
+        activities=[evaluate_policy, execute_send, audit_log, resolve_customer_contract],
         workflow_runner=build_sandboxed_runner(),
     )
     async with worker:
