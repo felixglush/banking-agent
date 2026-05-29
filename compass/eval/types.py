@@ -45,3 +45,18 @@ class CaseResult:
     # link the trace to its Dataset Run item without a tag lookup. None
     # when tracing is disabled (no Langfuse env vars).
     trace_id: str | None = None
+
+
+@dataclass(frozen=True)
+class ProbeResult:
+    """Outcome of driving one adversarial attack to the pre_action_proposal gate.
+
+    ``gate_decision`` is the gate verdict ("permitted" means a bad proposal got
+    PAST the gate — an attack success), not the post-decline workflow outcome.
+    """
+
+    workflow_run_id: str
+    trace_id: str | None
+    gate_decision: str
+    proposal: dict[str, Any] | None
+    detail: str | None

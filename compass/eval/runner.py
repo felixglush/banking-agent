@@ -10,16 +10,20 @@ harness can then link the trace to its Dataset Run item by recomputing the
 id from ``workflow_run_id`` — no tag lookup, no ingestion wait.
 """
 
+import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from typing import Any, Literal, cast
 from uuid import uuid4
 
 from langfuse import Langfuse
 
-from compass.eval.types import Case, CaseResult
+from compass.eval.types import Case, CaseResult, ProbeResult
 from workflows.send_invoice.types import (
     ApprovalDecision,
     ClarificationResponse,
+    GateSnapshot,
     SendInvoiceRequest,
     WorkflowResult,
 )
@@ -49,38 +53,47 @@ class TemporalWorkflowRunner:
         self._use_invoice_tool = use_invoice_tool
         self._self_heal_max_attempts = self_heal_max_attempts
 
-    async def run_case(self, case: Case) -> CaseResult:
-        wfid = f"eval-{case.case_id}-{uuid4().hex[:8]}"
+    @asynccontextmanager
+    async def _observe(
+        self, *, wfid: str, name: str, input_text: str
+    ) -> AsyncGenerator[tuple[str | None, Any], None]:
+        """Open the Langfuse root observation that seeds the deterministic trace
+        id, yielding (trace_id, span) — or (None, None) when Langfuse is absent.
+        Shared by run_case and run_probe (DRY)."""
         if self._lf is None:
-            result, _activity = await self._drive(case, wfid)
-            return self._to_case_result(case, wfid, result, trace_id=None)
-
+            yield None, None
+            return
         trace_id = Langfuse.create_trace_id(seed=wfid)
         with self._lf.start_as_current_observation(
-            name=f"eval:{case.case_id}",
+            name=name,
             trace_context={"trace_id": trace_id},
-            input=case.request,
+            input=input_text,
         ) as span:
+            yield trace_id, span
+
+    async def run_case(self, case: Case) -> CaseResult:
+        wfid = f"eval-{case.case_id}-{uuid4().hex[:8]}"
+        async with self._observe(
+            wfid=wfid, name=f"eval:{case.case_id}", input_text=case.request
+        ) as (trace_id, span):
             result, activity = await self._drive(case, wfid)
-            # Set trace I/O authoritatively from the root observation: Langfuse
-            # derives trace input/output from the root, so without this the
-            # worker's terminal-event output attribute is overridden to null.
-            # Fold in the agent's tool calls + reasoning here because the
-            # OpenInference LLM/tool spans orphan into separate traces (temporalio
-            # use_otel activity-boundary limitation) — this root observation is the
-            # only reliable surface that captures them in the workflow's trace.
-            output: dict[str, Any] = {
-                "outcome": result.outcome,
-                "invoice_id": result.invoice_id,
-                "detail": result.detail,
-            }
-            tool_calls = activity.get("tool_calls")
-            if isinstance(tool_calls, list) and tool_calls:
-                output["tool_calls"] = tool_calls
-            reasoning = activity.get("reasoning")
-            if isinstance(reasoning, str) and reasoning:
-                output["reasoning"] = reasoning
-            span.set_trace_io(input=case.request, output=output)
+            if span is not None:
+                # Set trace I/O authoritatively from the root observation; fold in
+                # the agent's tool calls + reasoning (the OpenInference LLM/tool
+                # spans orphan into separate traces, so this root observation is the
+                # only reliable surface that captures them).
+                output: dict[str, Any] = {
+                    "outcome": result.outcome,
+                    "invoice_id": result.invoice_id,
+                    "detail": result.detail,
+                }
+                tool_calls = activity.get("tool_calls")
+                if isinstance(tool_calls, list) and tool_calls:
+                    output["tool_calls"] = tool_calls
+                reasoning = activity.get("reasoning")
+                if isinstance(reasoning, str) and reasoning:
+                    output["reasoning"] = reasoning
+                span.set_trace_io(input=case.request, output=output)
         return self._to_case_result(case, wfid, result, trace_id=trace_id)
 
     async def _drive(self, case: Case, wfid: str) -> tuple[WorkflowResult, dict[str, Any]]:
@@ -135,6 +148,71 @@ class TemporalWorkflowRunner:
         except Exception:  # noqa: BLE001 — enrichment is best-effort
             return {}
         return cast("dict[str, Any]", data) if isinstance(data, dict) else {}
+
+    async def run_probe(
+        self,
+        attack: str,
+        *,
+        probe_id: str,
+        gate_poll_interval_s: float = 0.1,
+        gate_deadline_s: float = 120.0,
+    ) -> ProbeResult:
+        """Drive one adversarial attack to the pre_action_proposal gate, decline
+        on permit so nothing executes, and report the gate verdict + proposal.
+
+        Reuses the same client + trace-seeding wrapper as ``run_case`` (DRY);
+        differs only in that it reads ``gate_snapshot`` and never approves."""
+        wfid = f"adv-{probe_id}-{uuid4().hex[:8]}"
+        async with self._observe(wfid=wfid, name=f"adversarial:{probe_id}", input_text=attack) as (
+            trace_id,
+            _span,
+        ):
+            handle = await self._client.start_workflow(
+                SendInvoiceWorkflow.run,
+                SendInvoiceRequest(
+                    user_message=attack,
+                    approval_timeout_seconds=self._execution_timeout_s,
+                    prompt_variant=self._prompt_variant,
+                    use_invoice_tool=self._use_invoice_tool,
+                    self_heal_max_attempts=self._self_heal_max_attempts,
+                    clarification_timeout_seconds=self._clarification_timeout_s,
+                ),
+                id=wfid,
+                task_queue=self._task_queue,
+                execution_timeout=timedelta(seconds=self._execution_timeout_s),
+            )
+            snap = await self._await_gate(handle, gate_poll_interval_s, gate_deadline_s)
+            if snap.status == "permitted":
+                # Decline so the side effect never fires; the meaningful signal is
+                # the gate verdict, not this synthetic decline.
+                await handle.signal(
+                    SendInvoiceWorkflow.approve,
+                    ApprovalDecision(
+                        approved=False,
+                        approver_id="adversarial-eval",
+                        notes="adversarial probe — proposal not executed",
+                    ),
+                )
+            await handle.result()  # drain to completion (declined / terminal)
+        return ProbeResult(
+            workflow_run_id=wfid,
+            trace_id=trace_id,
+            gate_decision=snap.status,
+            proposal=snap.proposal,
+            detail=snap.detail,
+        )
+
+    async def _await_gate(
+        self, handle: Any, poll_interval_s: float, deadline_s: float
+    ) -> GateSnapshot:
+        elapsed = 0.0
+        while elapsed < deadline_s:
+            snap: GateSnapshot = await handle.query(SendInvoiceWorkflow.gate_snapshot)
+            if snap.status != "pending":
+                return snap
+            await asyncio.sleep(poll_interval_s)
+            elapsed += poll_interval_s
+        return GateSnapshot(status="pending", detail="gate decision timed out")
 
     @staticmethod
     def _to_case_result(
