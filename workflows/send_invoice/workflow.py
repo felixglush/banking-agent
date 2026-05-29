@@ -65,6 +65,7 @@ with workflow.unsafe.imports_passed_through():
     from workflows.send_invoice.types import (
         ApprovalDecision,
         ClarificationResponse,
+        GateSnapshot,
         SendInvoiceRequest,
         WorkflowResult,
     )
@@ -109,6 +110,7 @@ class SendInvoiceWorkflow:
         self._policy_hash: str | None = None
         self._tool_calls: list[ToolCallRecord] = []
         self._reasoning_text: str = ""
+        self._gate = GateSnapshot()
 
     @workflow.signal(name="clarify")
     async def clarify(self, response: ClarificationResponse) -> None:
@@ -126,6 +128,11 @@ class SendInvoiceWorkflow:
             )
             return
         self._approval = decision
+
+    @workflow.query(name="gate_snapshot")
+    def gate_snapshot(self) -> GateSnapshot:
+        """Read-only adversarial probe surface: the gate verdict + proposal."""
+        return self._gate
 
     @workflow.query(name="agent_activity")
     def agent_activity(self) -> dict[str, Any]:
@@ -155,6 +162,9 @@ class SendInvoiceWorkflow:
                 event_kind="agent_no_output",
                 payload={"user_message": req.user_message},
                 decision="block",
+            )
+            self._gate = GateSnapshot(
+                status="unsupported", detail="scope gate returned no classification"
             )
             return WorkflowResult(
                 outcome="unsupported",
@@ -195,6 +205,7 @@ class SendInvoiceWorkflow:
                 },
                 decision="block",
             )
+            self._gate = GateSnapshot(status="unsupported", detail=str(e))
             return WorkflowResult(outcome="unsupported", detail=str(e))
 
         self._policy_hash = payload.policy_hash
@@ -246,6 +257,9 @@ class SendInvoiceWorkflow:
                         event_kind="agent_no_output",
                         payload={"user_message": req.user_message},
                     )
+                    self._gate = GateSnapshot(
+                        status="no_proposal", detail="agent returned no structured proposal"
+                    )
                     return WorkflowResult(
                         outcome="policy_rejected",
                         detail="Agent returned no structured proposal.",
@@ -273,6 +287,7 @@ class SendInvoiceWorkflow:
                                 timeout=timedelta(seconds=req.clarification_timeout_seconds),
                             )
                         except TimeoutError:
+                            self._gate = GateSnapshot(status="needs_clarification", detail=question)
                             return WorkflowResult(outcome="needs_clarification", detail=question)
                     answer = self._clarification
                     assert answer is not None
@@ -379,11 +394,17 @@ class SendInvoiceWorkflow:
                         payload={"error_type": err_type, "message": str(e)},
                         decision="block",
                     )
+                    self._gate = GateSnapshot(
+                        status="policy_rejected",
+                        proposal=proposal.model_dump(),
+                        detail=str(e),
+                    )
                     return WorkflowResult(outcome="policy_rejected", detail=str(e))
 
         assert payload is not None
         self._policy_hash = payload.policy_hash
         self._next_seq = payload.next_sequence_no - 1  # advance to last used
+        self._gate = GateSnapshot(status="permitted", proposal=proposal.model_dump())
 
         # ---- 4. human approval wait -----------------------------------------
         try:

@@ -133,3 +133,29 @@ class WorkflowResult(BaseModel):
     outcome: WorkflowOutcome
     invoice_id: str | None = None
     detail: str | None = None
+
+
+GateStatus = Literal[
+    "pending",
+    "permitted",
+    "policy_rejected",
+    "unsupported",
+    "no_proposal",
+    "needs_clarification",
+]
+
+
+class GateSnapshot(BaseModel):
+    """Read-only view of the pre_action_proposal gate for adversarial probing.
+
+    ``status`` starts "pending" and moves to a terminal value once the gate
+    decides (or the workflow ends earlier). ``proposal`` is the agent's
+    ``InvoiceProposal.model_dump()`` once one exists (carried on both the
+    permitted and policy_rejected paths so a probe can grade the attempted
+    proposal either way)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    status: GateStatus = "pending"
+    proposal: dict[str, Any] | None = None
+    detail: str | None = None
