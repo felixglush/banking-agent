@@ -10,17 +10,17 @@ LLM evaluation of the SendInvoiceWorkflow agent. About **agent performance**,
 | Dataset | `send_invoice_v0_1` (Langfuse), 119 train / 51 holdout |
 | Agent model | **gpt-5** (default; reasoning, 500k-TPM tier) |
 | Suites | functional (exact field match), policy_compliance (exact fired-rule set), cost_latency (passthrough) |
-| Run | `ev_124ddae33549` — 119 train cases, default config |
+| Run | `ev_21269fbfc8fc` — 119 train cases, default config |
 
 ## Headline
 
 | Suite | Pass | |
 | --- | --- | --- |
-| **functional** | **100/119 (84.0%)** | from 18.5% on the original corpus |
-| policy_compliance | **111/119 (93.3%)** | |
+| **functional** | **108/119 (90.8%)** | from 18.5% on the original corpus |
+| policy_compliance | **110/119 (92.4%)** | |
 | cost_latency | 119/119 (100%) | passthrough |
 
-### How it got from 18.5% → 84% (each lever, measured)
+### How it got from 18.5% → 90.8% (each lever, measured)
 
 | Step | functional | policy_compliance |
 | --- | --- | --- |
@@ -29,25 +29,31 @@ LLM evaluation of the SendInvoiceWorkflow agent. About **agent performance**,
 | + clarification round-trip (stricter) | 37.8% | 77.3% |
 | + deterministic `contract_id` | 43.7% | 94.1% |
 | + **gpt-5** (replaces gpt-4.1-mini) | 73.9% | 91.6% |
-| + `compute_line_total` tool (unit-correct arithmetic) | — | — |
-| + tighter clarification prompt | 74.8% | 90.8% |
-| + **user_specified states its amount** (corpus) | **84.0%** | **93.3%** |
+| + `compute_line_total` tool + tighter clarification | 74.8% | 90.8% |
+| + **user_specified states its amount** (corpus) | 84.0% | 93.3% |
+| + **active-contract resolved server-side** + **exact-name customer match** | **90.8%** | **92.4%** |
 
 The big movers: **gpt-5** (better grounding/classification, and a 500k-TPM tier
 so the eval isn't throttled like gpt-4.1's 30k), the **`compute_line_total`
+The big movers: **gpt-5** (better grounding/classification, and a 500k-TPM tier
+so the eval isn't throttled like gpt-4.1's 30k); the **`compute_line_total`
 tool** (the failing amounts were off by clean 10×–100× — a `quantity_micros ×
-unit_amount_cents / 1e6` units bug, not resolution), and **putting the amount
-in `user_specified` requests** (an ad-hoc amount isn't derivable from any
-rate/contract/time data, so the case was ill-posed without it).
+unit_amount_cents / 1e6` units bug, not resolution); **putting the amount
+in `user_specified` requests** (an ad-hoc amount isn't derivable from
+rate/contract/time data, so the case was ill-posed without it); resolving the
+**active contract server-side** (the contract a customer bills under is a
+property of the customer, not a model judgment — fixed the "right amount, null
+contract_id" time-tracking misses); and an **exact-name customer match** rule
+(stop over-asking when one customer's name exactly equals the request).
 
-### Remaining 19 functional misses
+### Remaining 11 functional misses
 
-- **8** — over-clarification on `policy_rejected` cases: the request is "Acme
-  Corp" (one of nine "Acme*" customers), so gpt-5 asks which rather than taking
-  the exact-name match and getting KYC-blocked.
-- **10** — `field_mismatch` on `sent` cases (residual `contract_id` / `total_cents`
-  / `source_type` grounding).
-- **1** — over-clarification on a `sent` case.
+- **7** — over-clarification on `policy_rejected` cases: the request is "Acme
+  Corp" (one of nine "Acme*" customers), so gpt-5 still sometimes asks which
+  rather than taking the exact-name match and getting KYC-blocked.
+- **2** — `field_mismatch` (Onboarding-Package billed as `contract` rather than
+  `rate_card` → wrong source/amount).
+- **2** — other outcome-class misses.
 
 ## Failure modes (each → its fix)
 
@@ -103,23 +109,25 @@ type, so the exact total wasn't determinable. Fixes shipped:
   75.6% → 94.1%) and made `contract_id` a function of `source_type` rather than
   an independent error.
 
-## Winning config (reaches 84%)
+## Winning config (reaches 90.8%)
 
 `gpt-5` (default) + `compute_line_total`/`compute_invoice_total` tools
 (default on) + a 7-tool MCP filter + `max_turns=20` (reasoning models need the
-headroom) + deterministic `contract_id` + the well-posed corpus (specific
-requests, clarification round-trip, `user_specified` states its amount).
-gpt-5's 500k-TPM tier means the eval runs unthrottled; `gpt-4.1` (30k TPM) was
-the throughput bottleneck. Override the model with `OPENAI_MODEL` for
+headroom) + `contract_id` derived from the **server-resolved active contract**
+(injected into `resolved_entities` so the policy gates see it) + an
+**exact-name customer match** rule + the well-posed corpus (specific requests,
+clarification round-trip, `user_specified` states its amount). gpt-5's
+500k-TPM tier means the eval runs unthrottled; `gpt-4.1` (30k TPM) was the
+throughput bottleneck. Override the model with `OPENAI_MODEL` for
 cheaper/faster runs (expect lower functional).
 
-## Recommendations (to push past 84%)
+## Recommendations (to push past 90.8%)
 
-1. **The "Acme" over-clarification** (8 cases) — make the `policy_rejected`
-   requests name an unambiguous customer, or teach the agent that an exact
-   name match isn't ambiguous. Biggest single remaining bucket.
-2. **Residual amount/source grounding** (10 cases) — mostly model; a
-   higher-tier model or a per-source pricing tool would help.
+1. **The "Acme" over-clarification** (7 cases) — make the `policy_rejected`
+   requests name an unambiguous customer, or harden the exact-name rule. Still
+   the biggest single bucket.
+2. **Source mis-classification** (2 cases) — "Onboarding Package" billed as a
+   contract rather than rate_card; a typed source-selection step would fix it.
 
 ## Caveats
 

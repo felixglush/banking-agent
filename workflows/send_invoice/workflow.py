@@ -52,6 +52,7 @@ with workflow.unsafe.imports_passed_through():
         audit_log,
         evaluate_policy,
         execute_send,
+        resolve_customer_contract,
     )
     from workflows.send_invoice.agents import build_main_agent
     from workflows.send_invoice.context import (
@@ -292,6 +293,25 @@ class SendInvoiceWorkflow:
                 # docs/eval-results-send-invoice-v0.1.md.)
                 if proposal.source_type in ("contract", "time_tracking"):
                     resolved_contract = resolved_entities.get("contract")
+                    # If the agent didn't resolve the contract, look it up and
+                    # inject it into resolved_entities — so BOTH the contract_id
+                    # derivation and the policy gates (contract_must_exist,
+                    # contract_consistency) see a fully-resolved contract, not a
+                    # dangling id. The contract a customer bills under is
+                    # determined by the customer, not the model.
+                    if not (isinstance(resolved_contract, dict) and resolved_contract.get("id")):
+                        if proposal.customer_id:
+                            fetched = cast(
+                                "dict[str, Any] | None",
+                                await workflow.execute_activity(
+                                    resolve_customer_contract,
+                                    proposal.customer_id,
+                                    start_to_close_timeout=timedelta(seconds=15),
+                                ),
+                            )
+                            if fetched is not None:
+                                resolved_entities["contract"] = fetched
+                                resolved_contract = fetched
                     proposal.contract_id = (
                         cast("str | None", resolved_contract.get("id"))
                         if isinstance(resolved_contract, dict) else None

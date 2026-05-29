@@ -396,6 +396,28 @@ class ExecuteSendInput:
 
 
 @activity.defn
+async def resolve_customer_contract(customer_id: str) -> dict[str, Any] | None:
+    """Return the customer's contract (each customer has at most one), as the
+    fields the policy reads — ``id``, ``currency``, ``monthly_hour_cap``.
+
+    Used by the workflow to resolve the contract deterministically for
+    contract/time-tracking invoices when the agent didn't — the contract a
+    customer bills under is a property of the customer, not a model judgment.
+    The workflow injects this into ``resolved_entities.contract`` so the
+    policy gates see a fully-resolved contract (not a dangling id)."""
+    async with await psycopg.AsyncConnection.connect(_dsn()) as conn, conn.cursor() as cur:
+        await cur.execute(
+            "SELECT id, currency, monthly_hour_cap FROM contracts WHERE customer_id = %s "
+            "ORDER BY effective_from DESC, id DESC LIMIT 1",
+            (customer_id,),
+        )
+        row = await cur.fetchone()
+    if row is None:
+        return None
+    return {"id": row[0], "currency": row[1], "monthly_hour_cap": row[2]}
+
+
+@activity.defn
 async def execute_send(args: ExecuteSendInput) -> str:
     """Persist the approved invoice. Returns the invoice id."""
     proposal = InvoiceProposal.model_validate(args.proposal)
