@@ -198,16 +198,19 @@ async def _write_audit_row(
 
 
 @activity.defn
-async def audit_log(event: AuditEvent) -> None:
-    """Append one (or more) rows to audit_log.
+async def audit_log(event: AuditEvent) -> int:
+    """Append one (or more) rows to audit_log; return the next-free seq.
 
-    Non-terminal events: one row, simple insert.
+    Non-terminal events: one row, simple insert. Returns
+    ``event.sequence_no + 1``.
 
     Terminal events: run evaluate_audit_validation against the
     candidate row in-memory; emit rule_fired events through an
     AuditLogSink that allocates sequence numbers starting at
     event.sequence_no + 1; then insert the original terminal row at
     event.sequence_no. All in one transaction — recursion-safe.
+    Returns one past the last rule row, so the workflow can sync its
+    counter instead of guessing how many audit_validation rules fired.
 
     No raise on audit_validation BLOCK — at Stage 5 those rules fire
     only on workflow defects, and we write the row regardless so the
@@ -216,6 +219,7 @@ async def audit_log(event: AuditEvent) -> None:
     """
     _enrich_langfuse_trace(event)
     policy_disabled = os.environ.get("COMPASS_POLICY_DISABLE") == "1"
+    next_sequence_no = event.sequence_no + 1
     async with await psycopg.AsyncConnection.connect(_dsn()) as conn:
         try:
             async with conn.cursor() as cur:
@@ -233,10 +237,11 @@ async def audit_log(event: AuditEvent) -> None:
                         "tool_calls": event.tool_calls_for_validation,
                         "reasoning_text": event.reasoning_text_for_validation,
                     }
+                    allocator = SequenceAllocator(event.sequence_no + 1)
                     sink = AuditLogSink(
                         conn,
                         event.workflow_run_id,
-                        SequenceAllocator(event.sequence_no + 1),
+                        allocator,
                         event.policy_hash_for_validation or "unknown",
                     )
                     try:
@@ -252,6 +257,7 @@ async def audit_log(event: AuditEvent) -> None:
                             type="PolicyEngineError",
                             non_retryable=not e.retryable,
                         ) from e
+                    next_sequence_no = allocator.peek()
                 await _write_audit_row(
                     cur,
                     event,
@@ -264,6 +270,7 @@ async def audit_log(event: AuditEvent) -> None:
                 type="PolicyInfraError",
                 non_retryable=False,
             ) from e
+    return next_sequence_no
 
 
 # ---------------------------------------------------------------------
@@ -364,6 +371,10 @@ async def evaluate_policy(args: EvaluatePolicyInput) -> PolicyDecisionPayload:
                     {"rule_id": v.rule_id, "message": v.message, "evidence": v.evidence}
                     for v in decision.violations
                 ],
+                # Next-free sequence number past the rule rows this block
+                # already committed, so the workflow syncs its counter
+                # instead of guessing how many rows fired.
+                "next_sequence_no": allocator.peek(),
             },
             type="PolicyDecisionError",
             non_retryable=True,

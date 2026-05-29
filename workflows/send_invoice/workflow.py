@@ -69,7 +69,19 @@ with workflow.unsafe.imports_passed_through():
         WorkflowResult,
     )
 
-_POLICY_DECISION_RETRY = RetryPolicy(maximum_attempts=1)
+# evaluate_policy retries transient infra errors (DB blips → the activity's
+# PolicyInfraError, non_retryable=False) but never a deterministic policy
+# decision: re-running a block on the same context blocks again. The activity
+# already marks PolicyDecisionError non_retryable=True; listing it here names
+# that intent at the call site too. A bare maximum_attempts=1 would have
+# capped *every* failure at one attempt, making the retryable classification
+# dead code.
+_POLICY_ACTIVITY_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    backoff_coefficient=2.0,
+    maximum_attempts=5,
+    non_retryable_error_types=["PolicyDecisionError"],
+)
 
 
 def _heal_feedback(cause: ApplicationError | None) -> str:
@@ -97,6 +109,22 @@ def _heal_feedback(cause: ApplicationError | None) -> str:
         "fixes every problem above. Ground every line item and any contract_id "
         "in MCP tool output; never return an empty proposal or a placeholder total."
     )
+
+
+def _tip_from_error(cause: ApplicationError | None) -> int | None:
+    """The next-free sequence number the policy activity reached before it
+    raised, read from the PolicyDecisionError details. None if absent — an
+    infra failure that wrote nothing structured, or an older activity.
+    Pure/deterministic — runs in the workflow."""
+    try:
+        raw: object = cause.details[0] if cause and cause.details else None
+        if isinstance(raw, dict):
+            n = cast(dict[str, Any], raw).get("next_sequence_no")
+            if isinstance(n, int):
+                return n
+    except Exception:  # noqa: BLE001 — best-effort counter sync
+        pass
+    return None
 
 
 @workflow.defn(name="SendInvoiceWorkflow")
@@ -166,14 +194,15 @@ class SendInvoiceWorkflow:
                     context=input_ctx,
                 ),
                 start_to_close_timeout=timedelta(seconds=30),
-                retry_policy=_POLICY_DECISION_RETRY,
+                retry_policy=_POLICY_ACTIVITY_RETRY,
             )
         except ActivityError as e:
             cause = e.cause if isinstance(e.cause, ApplicationError) else None
             err_type = cause.type if cause else None
-            # One rule at this phase today; bump conservatively past
-            # any sink writes the activity made before raising.
-            self._next_seq += 2
+            # Sync to the tip the activity reached; fall back to a
+            # conservative bump (one rule at this phase) if it carried none.
+            tip = _tip_from_error(cause)
+            self._next_seq = tip - 1 if tip is not None else self._next_seq + 2
             await self._audit(
                 phase="input_validation",
                 event_kind="unsupported",
@@ -341,7 +370,7 @@ class SendInvoiceWorkflow:
                             context=proposal_ctx,
                         ),
                         start_to_close_timeout=timedelta(seconds=60),
-                        retry_policy=_POLICY_DECISION_RETRY,
+                        retry_policy=_POLICY_ACTIVITY_RETRY,
                     )
                     break  # permitted
                 except ActivityError as e:
@@ -349,9 +378,13 @@ class SendInvoiceWorkflow:
                     # read the type the activity assigned.
                     cause = e.cause if isinstance(e.cause, ApplicationError) else None
                     err_type = cause.type if cause else None
-                    # The activity may have reserved sequence numbers for rule
-                    # events written before raising; advance past them.
-                    self._next_seq += 12  # at most ~12 rules in the policy
+                    # Sync to the tip the activity reported (rule rows it wrote
+                    # before raising); fall back to a conservative bump past
+                    # the policy's ~12 rules if it carried none. Critical on
+                    # the self-heal path: the next attempt's writes must not
+                    # collide with this blocked attempt's rows.
+                    tip = _tip_from_error(cause)
+                    self._next_seq = tip - 1 if tip is not None else self._next_seq + 12
                     if attempts_left > 0 and err_type == "PolicyDecisionError":
                         attempts_left -= 1
                         feedback = _heal_feedback(cause)
@@ -427,13 +460,16 @@ class SendInvoiceWorkflow:
                     context=pre_exec_ctx,
                 ),
                 start_to_close_timeout=timedelta(seconds=60),
-                retry_policy=_POLICY_DECISION_RETRY,
+                retry_policy=_POLICY_ACTIVITY_RETRY,
             )
             self._next_seq = payload.next_sequence_no - 1
         except ActivityError as e:
             cause = e.cause if isinstance(e.cause, ApplicationError) else None
             err_type = cause.type if cause else None
-            self._next_seq += 4  # at most 2 pre_execute rules
+            # Sync to the tip the activity reached; fall back to a
+            # conservative bump (at most 2 pre_execute rules) if it carried none.
+            tip = _tip_from_error(cause)
+            self._next_seq = tip - 1 if tip is not None else self._next_seq + 4
             await self._audit(
                 phase="pre_execute",
                 event_kind="policy_rejected",
@@ -486,7 +522,7 @@ class SendInvoiceWorkflow:
         is_terminal_event: bool = False,
     ) -> None:
         seq = self._allocate_seq()
-        await workflow.execute_activity(
+        next_tip = await workflow.execute_activity(
             audit_log,
             AuditEvent(
                 workflow_run_id=workflow.info().workflow_id,
@@ -504,11 +540,8 @@ class SendInvoiceWorkflow:
             ),
             start_to_close_timeout=timedelta(seconds=15),
         )
-        # Audit_validation may have written extra rule_fired rows past
-        # our allocated seq. Advance our counter past them to avoid
-        # collisions on the next write.
-        if is_terminal_event:
-            # Conservative bump — at Stage 5 there are 2 audit_validation
-            # rules; even if both fire we won't collide. Production-grade
-            # counter sync would have the activity return the new tip.
-            self._next_seq += 4
+        # Sync to the tip the activity reached. A terminal event may have
+        # written audit_validation rule_fired rows past our allocated seq;
+        # the activity returns the real next-free number so the next write
+        # never collides. For a non-terminal event this is just seq + 1.
+        self._next_seq = next_tip - 1
