@@ -25,7 +25,6 @@ from agents.mcp import MCPServerStdio, MCPServerStdioParams, create_static_tool_
 from agents.mcp.server import MCPServer
 from dotenv import load_dotenv
 from langfuse import Langfuse
-from openinference.instrumentation.openai_agents import OpenAIAgentsInstrumentor
 from opentelemetry import trace as otel_trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider as SdkTracerProvider
@@ -64,15 +63,14 @@ def _setup_tracing() -> Langfuse | None:
     Returns the Langfuse client so the caller can ``flush()`` on shutdown,
     or None if Langfuse env vars are unset (tracing disabled).
 
-    Three layers cooperate:
-
-    * ``create_tracer_provider()`` builds a replay-safe TracerProvider so
-      Temporal's ``OpenTelemetryPlugin`` can emit deterministic span IDs
-      during workflow replay.
-    * ``OpenAIAgentsInstrumentor`` records LLM/tool spans from the
-      OpenAI Agents SDK onto that provider.
-    * ``Langfuse(tracer_provider=...)`` attaches its OTLP exporter to the
-      same provider, so all three layers ship spans to one place.
+    Builds a replay-safe ``TracerProvider`` (so Temporal spans get
+    deterministic ids during workflow replay) and attaches Langfuse's OTLP
+    exporter to it. The OpenAI Agents SDK instrumentation that records the
+    LLM/tool spans — the agent's prompts and responses — is NOT installed
+    here. ``OpenAIAgentsPlugin(use_otel_instrumentation=True)`` owns it (see
+    ``build_plugin``), because only the plugin parents those spans into the
+    workflow's OTel trace across the workflow/activity boundary; a bare
+    ``OpenAIAgentsInstrumentor().instrument()`` leaves them disconnected.
     """
     if not os.environ.get("LANGFUSE_PUBLIC_KEY"):
         return None
@@ -81,7 +79,6 @@ def _setup_tracing() -> Langfuse | None:
         resource=Resource.create({"service.name": "compass-send-invoice"}),
     )
     otel_trace.set_tracer_provider(provider)
-    OpenAIAgentsInstrumentor().instrument()
     # ReplaySafeTracerProvider implements the abstract OTel TracerProvider
     # interface but is not a subclass of the SDK's concrete TracerProvider.
     # Langfuse only calls add_span_processor(), which the replay-safe one
@@ -132,7 +129,7 @@ def _mcp_factory(_arg: object | None) -> MCPServer:
     )
 
 
-def build_plugin() -> OpenAIAgentsPlugin:
+def build_plugin(*, tracing_enabled: bool) -> OpenAIAgentsPlugin:
     """Plugin shared between production worker and the test harness.
 
     The MCP call_tool activity's retry policy is set inside the workflow
@@ -141,6 +138,16 @@ def build_plugin() -> OpenAIAgentsPlugin:
     wrong" — non-retryable. The plugin itself only configures the LLM
     activity's timeout; default LLM retries are fine for transient
     upstream failures.
+
+    ``tracing_enabled`` turns on ``use_otel_instrumentation``, which installs
+    the OpenInference instrumentation *with* the context-propagation glue that
+    parents the agent's LLM/tool spans into the workflow's OTel trace (a bare
+    ``OpenAIAgentsInstrumentor().instrument()`` does not). It requires the
+    global OTel tracer provider to already be a ``ReplaySafeTracerProvider``
+    (set by ``_setup_tracing``), so it must stay off when tracing is disabled.
+    The workflow/activity DAG spans come from the separate
+    ``OpenTelemetryPlugin``, so ``add_temporal_spans`` is left off here to
+    avoid emitting them twice.
     """
     return OpenAIAgentsPlugin(
         model_params=ModelActivityParameters(
@@ -149,6 +156,8 @@ def build_plugin() -> OpenAIAgentsPlugin:
         mcp_server_providers=[
             StatefulMCPServerProvider(name="bank", server_factory=_mcp_factory),
         ],
+        use_otel_instrumentation=tracing_enabled,
+        add_temporal_spans=False,
     )
 
 
@@ -165,7 +174,9 @@ async def amain() -> None:
 
     langfuse = _setup_tracing()
 
-    plugins: list[OpenAIAgentsPlugin | OpenTelemetryPlugin] = [build_plugin()]
+    plugins: list[OpenAIAgentsPlugin | OpenTelemetryPlugin] = [
+        build_plugin(tracing_enabled=langfuse is not None)
+    ]
     if langfuse is not None:
         # OpenTelemetryPlugin is experimental in temporalio==1.27 — adds
         # OTel spans for workflow tasks + activities so the Langfuse trace
