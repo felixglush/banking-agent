@@ -224,7 +224,10 @@ class SendInvoiceWorkflow:
             agent_input = req.user_message
             attempts_left = req.self_heal_max_attempts
             while True:
-                result = await Runner.run(agent, input=agent_input, max_turns=10)
+                # 20 turns: reasoning models (gpt-5.x) make one tool call per
+                # turn and use the compute tools per line, so 10 is too tight;
+                # non-reasoning models finish well under this.
+                result = await Runner.run(agent, input=agent_input, max_turns=20)
                 proposal = result.final_output
                 if proposal is None:
                     await self._audit(

@@ -1011,9 +1011,21 @@ def _generate_ground_truth(
             continue
         if desc_key_count[(cast(str, inv["customer_id"]), desc)] != 1:
             continue  # not uniquely addressable → would be ambiguous
+        # user_specified means the user states the amount — so the request
+        # carries it (otherwise an ad-hoc amount isn't derivable from any
+        # rate/contract/time data and the case is ill-posed). Other source
+        # types derive the amount from the named basis.
+        if inv["source_type"] == "user_specified":
+            amount = cast(int, inv["total_cents"])
+            request = (
+                f"Send {customer['name']} the agreed "
+                f"${amount / 100:,.2f} invoice for: {desc}."
+            )
+        else:
+            request = f"Send {customer['name']} the invoice for: {desc}."
         invoice_cases.append({
             "case_id": f"ir_{len(invoice_cases) + 1:04d}",
-            "request": f"Send {customer['name']} the invoice for: {desc}.",
+            "request": request,
             "expected_outcome": "sent",
             "expected_decline_reason": None,
             "expected": {

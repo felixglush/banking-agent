@@ -65,8 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--prompt-variant", choices=["fixed", "legacy"], default="fixed",
                    help="agent prompt: 'fixed' (default) or 'legacy' "
                         "(abstention-prone baseline).")
-    p.add_argument("--invoice-tool", action="store_true",
-                   help="give the agent the compute_invoice_total tool.")
+    p.add_argument("--invoice-tool", action=argparse.BooleanOptionalAction, default=True,
+                   help="give the agent the compute_line_total/compute_invoice_total "
+                        "tools (default on; --no-invoice-tool to disable).")
     p.add_argument("--self-heal-attempts", type=int, default=0,
                    help="on a pre_action_proposal policy block, feed the "
                         "violation back to the agent and retry up to N times "

@@ -21,7 +21,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import cast
 
-from agents.mcp import MCPServerStdio, MCPServerStdioParams
+from agents.mcp import MCPServerStdio, MCPServerStdioParams, create_static_tool_filter
 from agents.mcp.server import MCPServer
 from dotenv import load_dotenv
 from langfuse import Langfuse
@@ -110,6 +110,23 @@ def _mcp_factory(_arg: object | None) -> MCPServer:
             args=["run", "python", "-m", "mcp_bank"],
             env=env,
             cwd=str(REPO_ROOT),
+        ),
+        # Expose only the tools the send_invoice agent needs to draft an
+        # invoice. Drops list_transactions (payments — irrelevant) and
+        # list_contracts (get_active_contract suffices), cutting tool-schema
+        # tokens re-sent every turn and removing distractor tools that can lead
+        # to wrong tool/source picks. get_invoice/list_invoices stay for the
+        # user_specified (ad-hoc) path.
+        tool_filter=create_static_tool_filter(
+            allowed_tool_names=[
+                "list_customers",
+                "get_customer",
+                "get_active_contract",
+                "get_rate_card",
+                "list_time_entries",
+                "list_invoices",
+                "get_invoice",
+            ],
         ),
     )
 

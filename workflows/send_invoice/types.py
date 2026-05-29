@@ -69,8 +69,10 @@ class SendInvoiceRequest(BaseModel):
     # deterministic workflow doesn't read env) ----
     # Agent prompt: "fixed" (default) vs "legacy" (the abstention-prone prompt).
     prompt_variant: Literal["fixed", "legacy"] = "fixed"
-    # Give the agent the compute_invoice_total tool.
-    use_invoice_tool: bool = False
+    # Give the agent the compute_line_total / compute_invoice_total tools so it
+    # offloads the micros/cents arithmetic (the dominant amount-error source).
+    # On by default — a clear correctness win.
+    use_invoice_tool: bool = True
     # Self-healing: on a pre_action_proposal policy block, feed the violation
     # back to the agent and retry up to this many extra attempts (0 = off).
     self_heal_max_attempts: int = 0

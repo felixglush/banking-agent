@@ -32,7 +32,26 @@ from workflows.send_invoice.types import InvoiceProposal
 
 PromptVariant = Literal["fixed", "legacy"]
 
-DEFAULT_MODEL = "gpt-4.1-mini"
+# gpt-5 is the v0.1 default: it reaches ~84% functional on the eval suite (vs
+# ~44% for gpt-4.1-mini), it has a 500k-TPM tier (no eval throttling), and the
+# compute_line_total tool keeps its arithmetic exact. It is a reasoning model,
+# so it is slower/costlier per call and needs the higher max_turns budget in
+# the workflow — override via OPENAI_MODEL for cheaper/faster runs.
+DEFAULT_MODEL = "gpt-5"
+
+
+@function_tool
+def compute_line_total(quantity_micros: int, unit_amount_cents: int) -> int:
+    """Return a line item's ``line_total_cents``, computed with correct units:
+    ``quantity_micros * unit_amount_cents / 1_000_000``.
+
+    Quantities are in MICROS (hours × 1_000_000; use 1_000_000 for a flat
+    quantity of 1) and rates are in integer CENTS. Always call this for every
+    line's total rather than multiplying by hand — getting the /1_000_000
+    micros conversion wrong is the most common error and yields amounts off by
+    10×–100×.
+    """
+    return quantity_micros * unit_amount_cents // 1_000_000
 
 
 @function_tool
@@ -40,9 +59,9 @@ def compute_invoice_total(line_totals_cents: list[int]) -> int:
     """Return the invoice total in integer cents: the sum of the per-line
     ``line_total_cents`` values passed in.
 
-    Call this to obtain ``total_cents`` rather than summing by hand — it
-    removes arithmetic mistakes. Pass the ``line_total_cents`` of every line
-    item and use the returned value verbatim as the proposal's ``total_cents``.
+    Call this to obtain ``total_cents`` rather than summing by hand. Pass the
+    ``line_total_cents`` of every line item (each from ``compute_line_total``)
+    and use the returned value verbatim as the proposal's ``total_cents``.
     """
     return sum(line_totals_cents)
 
@@ -105,9 +124,25 @@ _FIXED_TAIL = """\
 - The request names the SPECIFIC work to bill (a service, a role and
   month, a milestone, or a retainer month). Resolve exactly that work
   from the MCP tools and bill it — there is one correct invoice.
-- ALWAYS emit at least one line item, each grounded in MCP tool output,
-  and set `total_cents` to the sum of the line totals. NEVER return an
-  empty `line_items` or a placeholder `total_cents` on a normal draft.
+- AMOUNT, by source_type (resolve the exact figures from tools; do not
+  estimate):
+    - `rate_card`: the service's `list_amount_cents` from `get_rate_card`
+      is the line total (quantity 1).
+    - `time_tracking`: call `list_time_entries` for the named role+period,
+      SUM the hours across ALL matching entries, multiply by the hourly
+      rate (contract rate override if present, else the role's rate-card
+      rate). Include every matching entry — a partial sum is wrong.
+    - `contract` retainer: the contract's `monthly_amount_cents`; SOW
+      milestone: that milestone's `amount_cents`.
+- UNITS: `quantity_micros` is the quantity × 1_000_000 (so 24 hours =
+  24_000_000; a flat quantity of 1 = 1_000_000). `unit_amount_cents` is the
+  rate in integer cents. Do NOT do this multiplication yourself — for every
+  line call `compute_line_total(quantity_micros, unit_amount_cents)` to get
+  `line_total_cents`, then call `compute_invoice_total([...])` for
+  `total_cents`. (Hand arithmetic here is wrong ~half the time, off by
+  10×–100× from the micros/cents conversion.)
+- ALWAYS emit at least one line item, each grounded in MCP tool output.
+  NEVER return an empty `line_items` or a placeholder `total_cents`.
 - `contract_id` by source_type:
     - `source_type="contract"` and `source_type="time_tracking"`: REQUIRED —
       call `get_active_contract(customer_id, as_of_date)` and set
@@ -118,17 +153,19 @@ _FIXED_TAIL = """\
   Resolve the active contract for contract/time invoices; never invent a
   contract id.
 
-CLARIFICATION — this is mandatory, not optional:
-- BEFORE drafting, decide whether the request identifies exactly ONE
-  billable invoice. If the request is generic (e.g. "a time-tracking
-  invoice", "an invoice") and the customer has more than one billable
-  period / role / milestone that could match, then MORE THAN ONE invoice
-  is valid and you MUST NOT guess. Set `needs_clarification = true`, write
-  a specific question in `clarification_question` naming the concrete
-  options (e.g. "Which should I bill — Senior Engineer time in 2025-03,
-  or QA Engineer time in 2025-04?"), and leave `line_items` empty.
-- Only draft an invoice when the request pins down a single billable item
-  (it names the service, or the role+month, or the milestone).
+CLARIFICATION — rarely needed; DRAFT by default:
+- If the request names the SPECIFIC work — a service ("Onboarding
+  Package"), a role and period ("Senior Engineer services (2025-03)"), a
+  milestone, a retainer month, or an explicit amount — it is COMPLETE and
+  unambiguous. DRAFT it. Bill ALL entries matching the named role+period;
+  do NOT ask which project, or how to split, or to confirm — those are
+  fully determined by the named work. NEVER set `needs_clarification` for
+  a request of the form "the invoice for: <X>".
+- Ask ONLY when the request gives NO specific work to bill — a bare
+  request like "send Acme an invoice" or "a time-tracking invoice" (only a
+  category, no service/role/period) AND the customer has more than one
+  billable item. Only then set `needs_clarification = true` with a
+  specific question, and leave `line_items` empty.
 
 You CANNOT send the invoice. After you return the proposal, the
 workflow gates on human approval, then a separate activity (not
@@ -176,7 +213,9 @@ def build_main_agent(
     ``temporalio.contrib.openai_agents.workflow.stateful_mcp_server("bank")``
     inside ``workflow.run``; calling that outside a workflow raises.
     """
-    tools: list[Tool] = [compute_invoice_total] if use_invoice_tool else []
+    tools: list[Tool] = (
+        [compute_line_total, compute_invoice_total] if use_invoice_tool else []
+    )
     return Agent[None](
         name="send_invoice_main",
         instructions=_instructions(prompt_variant, use_invoice_tool),

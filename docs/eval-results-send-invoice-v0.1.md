@@ -8,53 +8,66 @@ LLM evaluation of the SendInvoiceWorkflow agent. About **agent performance**,
 | | |
 | --- | --- |
 | Dataset | `send_invoice_v0_1` (Langfuse), 119 train / 51 holdout |
-| Agent model | `gpt-4.1-mini` |
+| Agent model | **gpt-5** (default; reasoning, 500k-TPM tier) |
 | Suites | functional (exact field match), policy_compliance (exact fired-rule set), cost_latency (passthrough) |
-| Run | `ev_0d5801f3a4b9` — 119 train cases, fixed prompt + clarification round-trip + deterministic contract_id |
+| Run | `ev_124ddae33549` — 119 train cases, default config |
 
 ## Headline
 
-| Suite | Pass | Note |
+| Suite | Pass | |
 | --- | --- | --- |
-| **functional** | **52/119 (43.7%)** | up from 18.5% (under-specified corpus) → 37.8% → 43.7% |
-| policy_compliance | **112/119 (94.1%)** | up from 77.3% — deterministic contract_id removed the `contract_must_exist` blocks |
+| **functional** | **100/119 (84.0%)** | from 18.5% on the original corpus |
+| policy_compliance | **111/119 (93.3%)** | |
 | cost_latency | 119/119 (100%) | passthrough |
 
-**Where the gap is now (functional fail breakdown):** of 67 failures, **61
-reached `sent` but a field didn't exact-match** — `total_cents` ×57,
-`contract_id` ×38, `source_type` ×34 (overlapping). Only **6** are
-outcome-class misses (5 over-clarify, 1 block). So the agent almost always
-produces a *policy-clean, completed* invoice; it just doesn't get every field
-exactly right. The gap is **field grounding**: the amount (`total_cents`), the
-`source_type`, and the `contract_id` that now follows from `source_type`.
+### How it got from 18.5% → 84% (each lever, measured)
 
-Progression of the two suites as fixes landed:
-
-| | functional | policy_compliance |
+| Step | functional | policy_compliance |
 | --- | --- | --- |
-| under-specified corpus | 18.5% | — |
+| original (under-specified corpus, gpt-4.1-mini) | 18.5% | — |
 | well-posed requests + prompt fix | 42.9% | 75.6% |
 | + clarification round-trip (stricter) | 37.8% | 77.3% |
-| **+ deterministic contract_id (current)** | **43.7%** | **94.1%** |
+| + deterministic `contract_id` | 43.7% | 94.1% |
+| + **gpt-5** (replaces gpt-4.1-mini) | 73.9% | 91.6% |
+| + `compute_line_total` tool (unit-correct arithmetic) | — | — |
+| + tighter clarification prompt | 74.8% | 90.8% |
+| + **user_specified states its amount** (corpus) | **84.0%** | **93.3%** |
+
+The big movers: **gpt-5** (better grounding/classification, and a 500k-TPM tier
+so the eval isn't throttled like gpt-4.1's 30k), the **`compute_line_total`
+tool** (the failing amounts were off by clean 10×–100× — a `quantity_micros ×
+unit_amount_cents / 1e6` units bug, not resolution), and **putting the amount
+in `user_specified` requests** (an ad-hoc amount isn't derivable from any
+rate/contract/time data, so the case was ill-posed without it).
+
+### Remaining 19 functional misses
+
+- **8** — over-clarification on `policy_rejected` cases: the request is "Acme
+  Corp" (one of nine "Acme*" customers), so gpt-5 asks which rather than taking
+  the exact-name match and getting KYC-blocked.
+- **10** — `field_mismatch` on `sent` cases (residual `contract_id` / `total_cents`
+  / `source_type` grounding).
+- **1** — over-clarification on a `sent` case.
 
 ## Failure modes (each → its fix)
 
 Simple list, in priority order. Each points to the lever that addresses it.
 
-| # | Failure mode | Evidence | Fix |
+| # | Failure mode | Evidence (current run) | Status / fix |
 | --- | --- | --- | --- |
-| 1 | **Wrong amount** — total doesn't match the named basis. | `field_mismatch:[total_cents]` ×57 (the single biggest). | Grounding on the resolved rate/contract/time data; a `compute_invoice_total` tool helps the summation but the agent must first pull the right numbers. **Open — #1 driver.** |
-| 2 | **Wrong `source_type`** — agent mis-classifies the billing basis (e.g. calls an Onboarding-Package rate-card invoice "contract"). | `field_mismatch:[source_type]` ×34; cascades to `contract_id` (see #3). | Prompt/grounding on classifying the named basis. **Open.** |
-| 3 | **Wrong `contract_id`** — now downstream of #2: contract_id is derived from `source_type`, so a wrong source_type yields a wrong contract_id; plus wrong/no contract resolution on genuine contract cases. | `field_mismatch:[contract_id]` ×38. | Fix #2 + ensure the agent resolves the active contract for contract/time invoices. **Open.** |
-| 4 | **Over-clarification** — agent asks on a request that *was* specific. | 5 sent cases ended `needs_clarification`. | Tighten the clarification trigger in the prompt (only ask when >1 invoice truly matches). **Open.** |
-| — | **Contract mis-attachment / hallucination** (resolved) — agent attached a non-existent / wrong-for-source contract → FK crash or policy block. | 26 `contract_must_exist` blocks on the prior run → **0 now**. | `contract_id` derived deterministically in the workflow from `source_type` + the resolved contract; prompt corrected per source_type. `contract_must_exist` retained as a defensive guard. |
-| — | **Under-clarification** (resolved) — agent guessed instead of asking. | failure on the old corpus. | Clarification round-trip shipped (ask → caller answers → complete). |
-| — | **Abstention** (resolved) — agent returned an empty `total_cents=1` proposal. | dominant on the old corpus; gone. | Prompt fix + `require_amount_source` rejecting empty line items (shipped). |
+| 1 | **Over-clarification on `policy_rejected` "Acme" cases** — request says "Acme Corp" (one of 9 "Acme*" customers); gpt-5 asks which instead of taking the exact-name match and getting KYC-blocked. | 8 cases | **Open.** Either name the customer unambiguously in those requests, or prompt "an exact name match is not ambiguous." |
+| 2 | **Residual field grounding** — `sent` case completes but a field (`total_cents` / `contract_id` / `source_type`) is off. | 10 cases | **Open** (mostly model). Down sharply from earlier (the unit-arithmetic and contract-derivation fixes removed the systematic part). |
+| 3 | **Over-clarification on a `sent` case** | 1 case | **Open** (largely tamed by the prompt). |
+| — | **Wrong amount / unit bug** (resolved) — totals off by 10×–100×. | was the #1 driver | `compute_line_total` tool does `quantity_micros × unit_amount_cents / 1e6`; agent mandated to use it. |
+| — | **Contract mis-attachment / hallucination** (resolved) | 26 blocks → **0** | `contract_id` derived deterministically from `source_type` + resolved contract; `contract_must_exist` kept as a guard. |
+| — | **Abstention / under-clarification / KYC-mislabelled corpus** (resolved) | — | prompt fix + empty-line guard; clarification round-trip; KYC-verified corpus filter. |
+| — | **Ill-posed `user_specified`** (resolved) — ad-hoc amount not derivable. | — | request now states the amount ("the agreed $X invoice for: …"). |
 
 ## Policy saves — issues the policy caught before they happened
 
-Concrete scenarios from run `ev_0d5801f3a4b9` where a BLOCK rule stopped a bad
-invoice. Without the policy these would have been real defects.
+Concrete scenarios where a BLOCK rule stopped a bad invoice (counts from a
+representative run; stable across runs). Without the policy these would have
+been real defects.
 
 | Rule | Cases | What it prevented |
 | --- | --- | --- |
@@ -90,16 +103,23 @@ type, so the exact total wasn't determinable. Fixes shipped:
   75.6% → 94.1%) and made `contract_id` a function of `source_type` rather than
   an independent error.
 
-## Recommendations
+## Winning config (reaches 84%)
 
-1. **Improve amount grounding** (failure 1) — `total_cents` is the single
-   biggest field miss (×57). The agent reaches `sent` but computes/pulls the
-   wrong amount; a deterministic `compute_invoice_total` tool plus tighter
-   grounding on the resolved rate/contract/time data.
-2. **Improve `source_type` classification** (failure 2) — wrong source_type
-   (×34) also cascades into `contract_id`. Likely needs a stronger model.
-3. **Tune the clarification trigger** (failure 4) — the agent over-asks on
-   specific requests; ask only when >1 invoice truly matches.
+`gpt-5` (default) + `compute_line_total`/`compute_invoice_total` tools
+(default on) + a 7-tool MCP filter + `max_turns=20` (reasoning models need the
+headroom) + deterministic `contract_id` + the well-posed corpus (specific
+requests, clarification round-trip, `user_specified` states its amount).
+gpt-5's 500k-TPM tier means the eval runs unthrottled; `gpt-4.1` (30k TPM) was
+the throughput bottleneck. Override the model with `OPENAI_MODEL` for
+cheaper/faster runs (expect lower functional).
+
+## Recommendations (to push past 84%)
+
+1. **The "Acme" over-clarification** (8 cases) — make the `policy_rejected`
+   requests name an unambiguous customer, or teach the agent that an exact
+   name match isn't ambiguous. Biggest single remaining bucket.
+2. **Residual amount/source grounding** (10 cases) — mostly model; a
+   higher-tier model or a per-source pricing tool would help.
 
 ## Caveats
 

@@ -35,7 +35,7 @@ class TemporalWorkflowRunner:
         langfuse_client: Any | None = None,
         execution_timeout_s: int = 300,
         prompt_variant: Literal["fixed", "legacy"] = "fixed",
-        use_invoice_tool: bool = False,
+        use_invoice_tool: bool = True,
         self_heal_max_attempts: int = 0,
         clarification_timeout_s: int = 30,
     ) -> None:
