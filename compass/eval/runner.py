@@ -11,7 +11,7 @@ id from ``workflow_run_id`` — no tag lookup, no ingestion wait.
 """
 
 from datetime import timedelta
-from typing import Any, Literal
+from typing import Any, Literal, cast
 from uuid import uuid4
 
 from langfuse import Langfuse
@@ -52,7 +52,7 @@ class TemporalWorkflowRunner:
     async def run_case(self, case: Case) -> CaseResult:
         wfid = f"eval-{case.case_id}-{uuid4().hex[:8]}"
         if self._lf is None:
-            result = await self._drive(case, wfid)
+            result, _activity = await self._drive(case, wfid)
             return self._to_case_result(case, wfid, result, trace_id=None)
 
         trace_id = Langfuse.create_trace_id(seed=wfid)
@@ -61,21 +61,29 @@ class TemporalWorkflowRunner:
             trace_context={"trace_id": trace_id},
             input=case.request,
         ) as span:
-            result = await self._drive(case, wfid)
+            result, activity = await self._drive(case, wfid)
             # Set trace I/O authoritatively from the root observation: Langfuse
             # derives trace input/output from the root, so without this the
             # worker's terminal-event output attribute is overridden to null.
-            span.set_trace_io(
-                input=case.request,
-                output={
-                    "outcome": result.outcome,
-                    "invoice_id": result.invoice_id,
-                    "detail": result.detail,
-                },
-            )
+            # Fold in the agent's tool calls + reasoning here because the
+            # OpenInference LLM/tool spans orphan into separate traces (temporalio
+            # use_otel activity-boundary limitation) — this root observation is the
+            # only reliable surface that captures them in the workflow's trace.
+            output: dict[str, Any] = {
+                "outcome": result.outcome,
+                "invoice_id": result.invoice_id,
+                "detail": result.detail,
+            }
+            tool_calls = activity.get("tool_calls")
+            if isinstance(tool_calls, list) and tool_calls:
+                output["tool_calls"] = tool_calls
+            reasoning = activity.get("reasoning")
+            if isinstance(reasoning, str) and reasoning:
+                output["reasoning"] = reasoning
+            span.set_trace_io(input=case.request, output=output)
         return self._to_case_result(case, wfid, result, trace_id=trace_id)
 
-    async def _drive(self, case: Case, wfid: str) -> WorkflowResult:
+    async def _drive(self, case: Case, wfid: str) -> tuple[WorkflowResult, dict[str, Any]]:
         handle = await self._client.start_workflow(
             SendInvoiceWorkflow.run,
             SendInvoiceRequest(
@@ -114,7 +122,19 @@ class TemporalWorkflowRunner:
                     notes=f"automated by compass.eval for {case.case_id}",
                 ),
             )
-        return await handle.result()
+        result = await handle.result()
+        return result, await self._query_agent_activity(handle)
+
+    @staticmethod
+    async def _query_agent_activity(handle: Any) -> dict[str, Any]:
+        """Best-effort read of the workflow's tool calls + reasoning for trace
+        enrichment. Returns {} on any failure or unexpected shape — trace
+        enrichment must never fail the run."""
+        try:
+            data = await handle.query(SendInvoiceWorkflow.agent_activity)
+        except Exception:  # noqa: BLE001 — enrichment is best-effort
+            return {}
+        return cast("dict[str, Any]", data) if isinstance(data, dict) else {}
 
     @staticmethod
     def _to_case_result(
