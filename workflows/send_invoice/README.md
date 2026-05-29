@@ -109,10 +109,11 @@ OPENAI_API_KEY=sk-...
 # the worker and the MCP subprocess both read this
 COMPASS_PG_DSN=postgresql://compass:compass@localhost:5432/compass
 
-# optional — set to push agent + workflow spans to Langfuse (or any
-# OTLP collector). When unset the SDK keeps spans in-process.
-# LANGFUSE_OTLP_ENDPOINT=http://localhost:3000/api/public/otel/v1/traces
-# LANGFUSE_OTLP_AUTH=Basic <base64(public:secret)>
+# optional — set to push agent + workflow + activity spans to Langfuse.
+# When unset, tracing is disabled and spans stay in-process.
+# LANGFUSE_PUBLIC_KEY=pk-lf-...
+# LANGFUSE_SECRET_KEY=sk-lf-...
+# LANGFUSE_HOST=https://cloud.langfuse.com    # EU; US: https://us.cloud.langfuse.com
 ```
 
 ## Local demo
