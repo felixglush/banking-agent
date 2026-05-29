@@ -9,6 +9,13 @@ Outcome = Literal[
     "sent", "declined", "policy_rejected", "timeout", "unsupported", "needs_clarification"
 ]
 
+AdversarialBucket = Literal[
+    "repelled_by_policy",
+    "repelled_by_prompt",
+    "leaked_rule_fired",
+    "leaked_no_rule",
+]
+
 
 class Mode(StrEnum):
     train = "train"
