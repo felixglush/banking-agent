@@ -52,9 +52,7 @@ class PostgresEvalRunStore:
                     ) from None
                 continue
             except psycopg.errors.UniqueViolation as e:
-                raise HoldoutCapExceeded(
-                    f"concurrent holdout allocation for {git_sha}"
-                ) from e
+                raise HoldoutCapExceeded(f"concurrent holdout allocation for {git_sha}") from e
         raise HoldoutCapExceeded(f"exhausted retries for {git_sha}")
 
     async def _allocate_once(
@@ -89,9 +87,7 @@ class PostgresEvalRunStore:
                     assert next_no_raw is not None
                     next_no = int(next_no_raw)
                     if next_no > 3:
-                        raise HoldoutCapExceeded(
-                            f"git_sha {git_sha} has 3 holdout runs already"
-                        )
+                        raise HoldoutCapExceeded(f"git_sha {git_sha} has 3 holdout runs already")
                 else:
                     next_no = None
                 await cur.execute(
@@ -103,8 +99,14 @@ class PostgresEvalRunStore:
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
-                        run_id, git_sha, mode, holdout_justification,
-                        next_no, policy_enabled, suite_names, host_git_dirty,
+                        run_id,
+                        git_sha,
+                        mode,
+                        holdout_justification,
+                        next_no,
+                        policy_enabled,
+                        suite_names,
+                        host_git_dirty,
                     ),
                 )
             await conn.commit()

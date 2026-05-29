@@ -11,11 +11,22 @@ pytestmark = pytest.mark.asyncio
 
 
 def _ctx(trace_id: str | None = None) -> tuple[Case, CaseResult]:
-    case = Case(case_id="ir_0001", request="x", expected_outcome="sent",
-                expected={}, expected_fired_rules=[], expected_decline_reason=None)
-    result = CaseResult(case_id="ir_0001", workflow_run_id="wf-1",
-                        outcome="sent", invoice_id="inv-1", detail=None,
-                        trace_id=trace_id)
+    case = Case(
+        case_id="ir_0001",
+        request="x",
+        expected_outcome="sent",
+        expected={},
+        expected_fired_rules=[],
+        expected_decline_reason=None,
+    )
+    result = CaseResult(
+        case_id="ir_0001",
+        workflow_run_id="wf-1",
+        outcome="sent",
+        invoice_id="inv-1",
+        detail=None,
+        trace_id=trace_id,
+    )
     return case, result
 
 

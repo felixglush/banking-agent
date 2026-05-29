@@ -28,8 +28,9 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="compass.eval", description="Stage 7 eval harness")
     p.add_argument("--workflow", required=True, choices=["send_invoice"])
     p.add_argument("--mode", required=True, choices=["train", "holdout"])
-    p.add_argument("--suites", required=True,
-                   help="comma-separated: functional,policy_compliance,cost_latency")
+    p.add_argument(
+        "--suites", required=True, help="comma-separated: functional,policy_compliance,cost_latency"
+    )
     p.add_argument("--cases", default="", help="comma-separated case_id subset")
     p.add_argument(
         "--ground-truth-root",
@@ -46,32 +47,49 @@ def build_parser() -> argparse.ArgumentParser:
         "--dataset-name",
         default=None,
         help="Langfuse dataset name. Defaults to ground_truth/"
-             "dataset_manifest.json's name (written by simulate.py "
-             "--dataset-name), else <workflow>_v0_1.",
+        "dataset_manifest.json's name (written by simulate.py "
+        "--dataset-name), else <workflow>_v0_1.",
     )
-    p.add_argument("--ablation", action="store_true",
-                   help="run twice: policy on then off, link via paired_run_id")
-    p.add_argument("--holdout-justification", default=None,
-                   help="required when --mode=holdout")
-    p.add_argument("--budget-cap", type=float, default=None,
-                   help="override holdout budget in USD")
-    p.add_argument("--no-confirm", action="store_true",
-                   help="skip interactive holdout-mode confirmation")
-    p.add_argument("--concurrency", type=int, default=4,
-                   help="max cases run in parallel (default 4; cases are "
-                        "independent). Raise for speed, lower to ease load on "
-                        "the worker / OpenAI rate limits.")
+    p.add_argument(
+        "--ablation",
+        action="store_true",
+        help="run twice: policy on then off, link via paired_run_id",
+    )
+    p.add_argument("--holdout-justification", default=None, help="required when --mode=holdout")
+    p.add_argument("--budget-cap", type=float, default=None, help="override holdout budget in USD")
+    p.add_argument(
+        "--no-confirm", action="store_true", help="skip interactive holdout-mode confirmation"
+    )
+    p.add_argument(
+        "--concurrency",
+        type=int,
+        default=4,
+        help="max cases run in parallel (default 4; cases are "
+        "independent). Raise for speed, lower to ease load on "
+        "the worker / OpenAI rate limits.",
+    )
     # ---- agent ablation levers (passed into each SendInvoiceRequest) ----
-    p.add_argument("--prompt-variant", choices=["fixed", "legacy"], default="fixed",
-                   help="agent prompt: 'fixed' (default) or 'legacy' "
-                        "(abstention-prone baseline).")
-    p.add_argument("--invoice-tool", action=argparse.BooleanOptionalAction, default=True,
-                   help="give the agent the compute_line_total/compute_invoice_total "
-                        "tools (default on; --no-invoice-tool to disable).")
-    p.add_argument("--self-heal-attempts", type=int, default=0,
-                   help="on a pre_action_proposal policy block, feed the "
-                        "violation back to the agent and retry up to N times "
-                        "(0 = off).")
+    p.add_argument(
+        "--prompt-variant",
+        choices=["fixed", "legacy"],
+        default="fixed",
+        help="agent prompt: 'fixed' (default) or 'legacy' (abstention-prone baseline).",
+    )
+    p.add_argument(
+        "--invoice-tool",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="give the agent the compute_line_total/compute_invoice_total "
+        "tools (default on; --no-invoice-tool to disable).",
+    )
+    p.add_argument(
+        "--self-heal-attempts",
+        type=int,
+        default=0,
+        help="on a pre_action_proposal policy block, feed the "
+        "violation back to the agent and retry up to N times "
+        "(0 = off).",
+    )
     return p
 
 
@@ -81,15 +99,13 @@ def validate_args(ns: argparse.Namespace) -> None:
     suites = [s.strip() for s in suites_raw.split(",") if s.strip()]
     bad = [s for s in suites if s not in VALID_SUITES]
     if bad:
-        print(f"ERROR: unknown suite(s): {bad}. Valid: {sorted(VALID_SUITES)}",
-              file=sys.stderr)
+        print(f"ERROR: unknown suite(s): {bad}. Valid: {sorted(VALID_SUITES)}", file=sys.stderr)
         sys.exit(2)
     if ns.mode == "holdout":
         j_raw: str | None = ns.holdout_justification
         j = (j_raw or "").strip()
         if not j:
-            print("ERROR: --mode=holdout requires --holdout-justification",
-                  file=sys.stderr)
+            print("ERROR: --mode=holdout requires --holdout-justification", file=sys.stderr)
             sys.exit(2)
 
 
@@ -108,18 +124,26 @@ def _resolve_dataset_name(ns: argparse.Namespace, ground_truth_root: Path) -> st
 def _git_sha() -> str:
     """HEAD of the invoking repo (cwd), not of the compass install."""
     try:
-        return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-        ).decode().strip()
+        return (
+            subprocess.check_output(
+                ["git", "rev-parse", "HEAD"],
+            )
+            .decode()
+            .strip()
+        )
     except subprocess.CalledProcessError:
         return "unknown"
 
 
 def _git_dirty() -> bool:
     try:
-        out = subprocess.check_output(
-            ["git", "status", "--porcelain"],
-        ).decode().strip()
+        out = (
+            subprocess.check_output(
+                ["git", "status", "--porcelain"],
+            )
+            .decode()
+            .strip()
+        )
         return bool(out)
     except subprocess.CalledProcessError:
         return False
@@ -153,8 +177,7 @@ async def amain(argv: list[str]) -> int:
     suites = [s.strip() for s in ns.suites.split(",") if s.strip()]
 
     # Full corpus backs the Langfuse Dataset; --cases only subsets what runs.
-    corpus = load_corpus(workflow=ns.workflow, mode=mode,
-                         ground_truth_root=ground_truth_root)
+    corpus = load_corpus(workflow=ns.workflow, mode=mode, ground_truth_root=ground_truth_root)
     cases = corpus
     if ns.cases:
         wanted = set(ns.cases.split(","))
@@ -164,13 +187,16 @@ async def amain(argv: list[str]) -> int:
     if ns.mode == "holdout":
         try:
             estimate, used_heuristic = await estimate_run_cost(
-                client=langfuse_client, workflow=ns.workflow,
+                client=langfuse_client,
+                workflow=ns.workflow,
                 case_count=len(cases),
                 heuristic_per_case_usd=0.30,
                 cap_usd=ns.budget_cap or 40.00,
             )
-            print(f"preflight: estimated ${estimate:.2f} across {len(cases)} cases "
-                  f"({'heuristic' if used_heuristic else 'Langfuse history'}) — OK")
+            print(
+                f"preflight: estimated ${estimate:.2f} across {len(cases)} cases "
+                f"({'heuristic' if used_heuristic else 'Langfuse history'}) — OK"
+            )
         except BudgetExceeded as e:
             print(f"ERROR: {e}", file=sys.stderr)
             return 4
@@ -185,10 +211,12 @@ async def amain(argv: list[str]) -> int:
     # injects the active span context into workflow headers — that is what
     # propagates the runner's deterministic trace id into the worker's trace.
     temporal_client = await Client.connect(
-        temporal_target, plugins=[OpenTelemetryPlugin()],
+        temporal_target,
+        plugins=[OpenTelemetryPlugin()],
     )
     runner = TemporalWorkflowRunner(
-        client=temporal_client, task_queue=ns.task_queue,
+        client=temporal_client,
+        task_queue=ns.task_queue,
         langfuse_client=langfuse_client,
         prompt_variant=cast(Literal["fixed", "legacy"], ns.prompt_variant),
         use_invoice_tool=ns.invoice_tool,
@@ -207,6 +235,7 @@ async def amain(argv: list[str]) -> int:
 
     async def invoice_lookup(invoice_id: str) -> dict[str, Any] | None:
         import psycopg  # noqa: PLC0415
+
         async with (
             await psycopg.AsyncConnection.connect(dsn) as conn,
             conn.cursor() as cur,
@@ -222,17 +251,25 @@ async def amain(argv: list[str]) -> int:
         if row is None:
             return None
         return {
-            "customer_id": row[0], "contract_id": row[1], "currency": row[2],
-            "source_type": row[3], "total_cents": row[4],
+            "customer_id": row[0],
+            "contract_id": row[1],
+            "currency": row[2],
+            "source_type": row[3],
+            "total_cents": row[4],
         }
 
     try:
         if ns.ablation:
             report_on = await run_eval(
-                runner=runner, cases=cases, suites=suites, mode=mode,
+                runner=runner,
+                cases=cases,
+                suites=suites,
+                mode=mode,
                 git_sha=_git_sha(),
-                rule_fire_source=rule_src, score_sink=score_sink,
-                eval_run_store=eval_store, langfuse_client=langfuse_client,
+                rule_fire_source=rule_src,
+                score_sink=score_sink,
+                eval_run_store=eval_store,
+                langfuse_client=langfuse_client,
                 invoice_lookup=invoice_lookup,
                 holdout_justification=ns.holdout_justification,
                 host_git_dirty=_git_dirty(),
@@ -242,10 +279,15 @@ async def amain(argv: list[str]) -> int:
             os.environ["COMPASS_POLICY_DISABLE"] = "1"
             try:
                 report_off = await run_eval(
-                    runner=runner, cases=cases, suites=suites, mode=mode,
+                    runner=runner,
+                    cases=cases,
+                    suites=suites,
+                    mode=mode,
                     git_sha=_git_sha(),
-                    rule_fire_source=rule_src, score_sink=score_sink,
-                    eval_run_store=eval_store, langfuse_client=langfuse_client,
+                    rule_fire_source=rule_src,
+                    score_sink=score_sink,
+                    eval_run_store=eval_store,
+                    langfuse_client=langfuse_client,
                     invoice_lookup=invoice_lookup,
                     holdout_justification=ns.holdout_justification,
                     host_git_dirty=_git_dirty(),
@@ -259,10 +301,15 @@ async def amain(argv: list[str]) -> int:
             _print_lift_summary(report_on, report_off)
         else:
             report = await run_eval(
-                runner=runner, cases=cases, suites=suites, mode=mode,
+                runner=runner,
+                cases=cases,
+                suites=suites,
+                mode=mode,
                 git_sha=_git_sha(),
-                rule_fire_source=rule_src, score_sink=score_sink,
-                eval_run_store=eval_store, langfuse_client=langfuse_client,
+                rule_fire_source=rule_src,
+                score_sink=score_sink,
+                eval_run_store=eval_store,
+                langfuse_client=langfuse_client,
                 invoice_lookup=invoice_lookup,
                 holdout_justification=ns.holdout_justification,
                 host_git_dirty=_git_dirty(),

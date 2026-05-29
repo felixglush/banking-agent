@@ -88,7 +88,9 @@ def require_contract_exists():
         if contract is MISSING or contract is None or contract == {}:
             return Violation(
                 rule_id="",
-                message=f"proposal references contract {contract_id!r} but no contract was resolved",
+                message=(
+                    f"proposal references contract {contract_id!r} but no contract was resolved"
+                ),
                 evidence={"contract_id": contract_id, "reason": "unresolved"},
             )
         resolved_id = cast(dict[str, Any], contract).get("id")

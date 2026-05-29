@@ -12,22 +12,42 @@ pytestmark = pytest.mark.asyncio
 
 def _case(case_id: str, outcome: Outcome = "sent") -> Case:
     return Case(
-        case_id=case_id, request="x", expected_outcome=outcome,
-        expected={"customer_id": "c1", "contract_id": None, "currency": "USD",
-                  "source_type": "rate_card", "total_cents": 100},
-        expected_fired_rules=["A"], expected_decline_reason=None,
+        case_id=case_id,
+        request="x",
+        expected_outcome=outcome,
+        expected={
+            "customer_id": "c1",
+            "contract_id": None,
+            "currency": "USD",
+            "source_type": "rate_card",
+            "total_cents": 100,
+        },
+        expected_fired_rules=["A"],
+        expected_decline_reason=None,
     )
 
 
 async def test_runs_each_case_through_each_suite():
     cases = [_case("ir_001"), _case("ir_002")]
     runner = AsyncMock()
-    runner.run_case = AsyncMock(side_effect=[
-        CaseResult(case_id="ir_001", workflow_run_id="wf-1",
-                   outcome="sent", invoice_id="inv-1", detail=None),
-        CaseResult(case_id="ir_002", workflow_run_id="wf-2",
-                   outcome="sent", invoice_id="inv-2", detail=None),
-    ])
+    runner.run_case = AsyncMock(
+        side_effect=[
+            CaseResult(
+                case_id="ir_001",
+                workflow_run_id="wf-1",
+                outcome="sent",
+                invoice_id="inv-1",
+                detail=None,
+            ),
+            CaseResult(
+                case_id="ir_002",
+                workflow_run_id="wf-2",
+                outcome="sent",
+                invoice_id="inv-2",
+                detail=None,
+            ),
+        ]
+    )
     rule_src = AsyncMock()
     rule_src.rule_ids_fired = AsyncMock(return_value={"A"})
     score_sink = AsyncMock()
@@ -36,12 +56,24 @@ async def test_runs_each_case_through_each_suite():
     eval_store.allocate_run = AsyncMock(return_value="ev_test")
     eval_store.finalize = AsyncMock()
 
-    invoice_lookup = AsyncMock(side_effect=[
-        {"customer_id": "c1", "contract_id": None, "currency": "USD",
-         "source_type": "rate_card", "total_cents": 100},
-        {"customer_id": "c1", "contract_id": None, "currency": "USD",
-         "source_type": "rate_card", "total_cents": 100},
-    ])
+    invoice_lookup = AsyncMock(
+        side_effect=[
+            {
+                "customer_id": "c1",
+                "contract_id": None,
+                "currency": "USD",
+                "source_type": "rate_card",
+                "total_cents": 100,
+            },
+            {
+                "customer_id": "c1",
+                "contract_id": None,
+                "currency": "USD",
+                "source_type": "rate_card",
+                "total_cents": 100,
+            },
+        ]
+    )
 
     report = await run_eval(
         runner=runner,
@@ -77,27 +109,46 @@ async def test_concurrency_runs_parallel_and_aggregates_in_order():
         max_active = max(max_active, active)
         await asyncio.sleep(0.02)  # hold the slot so overlap is observable
         active -= 1
-        return CaseResult(case_id=case.case_id, workflow_run_id=f"wf-{case.case_id}",
-                          outcome="sent", invoice_id=f"inv-{case.case_id}", detail=None)
+        return CaseResult(
+            case_id=case.case_id,
+            workflow_run_id=f"wf-{case.case_id}",
+            outcome="sent",
+            invoice_id=f"inv-{case.case_id}",
+            detail=None,
+        )
 
     runner = AsyncMock()
     runner.run_case = AsyncMock(side_effect=run_case)
-    rule_src = AsyncMock(); rule_src.rule_ids_fired = AsyncMock(return_value={"A"})
+    rule_src = AsyncMock()
+    rule_src.rule_ids_fired = AsyncMock(return_value={"A"})
     score_sink = AsyncMock()
     eval_store = AsyncMock()
     eval_store.allocate_run = AsyncMock(return_value="ev_test")
     eval_store.finalize = AsyncMock()
-    invoice_lookup = AsyncMock(return_value={
-        "customer_id": "c1", "contract_id": None, "currency": "USD",
-        "source_type": "rate_card", "total_cents": 100,
-    })
+    invoice_lookup = AsyncMock(
+        return_value={
+            "customer_id": "c1",
+            "contract_id": None,
+            "currency": "USD",
+            "source_type": "rate_card",
+            "total_cents": 100,
+        }
+    )
 
     report = await run_eval(
-        runner=runner, cases=cases, suites=["functional"], mode=Mode.train,
-        git_sha="abc", rule_fire_source=rule_src, score_sink=score_sink,
-        eval_run_store=eval_store, langfuse_client=MagicMock(),
-        invoice_lookup=invoice_lookup, holdout_justification=None,
-        host_git_dirty=False, concurrency=3,
+        runner=runner,
+        cases=cases,
+        suites=["functional"],
+        mode=Mode.train,
+        git_sha="abc",
+        rule_fire_source=rule_src,
+        score_sink=score_sink,
+        eval_run_store=eval_store,
+        langfuse_client=MagicMock(),
+        invoice_lookup=invoice_lookup,
+        holdout_justification=None,
+        host_git_dirty=False,
+        concurrency=3,
     )
 
     assert max_active > 1, "cases did not run concurrently"
@@ -110,12 +161,24 @@ async def test_concurrency_runs_parallel_and_aggregates_in_order():
 async def test_failures_do_not_abort():
     cases = [_case("ir_001"), _case("ir_002", outcome="sent")]
     runner = AsyncMock()
-    runner.run_case = AsyncMock(side_effect=[
-        CaseResult(case_id="ir_001", workflow_run_id="wf-1",
-                   outcome="policy_rejected", invoice_id=None, detail=None),
-        CaseResult(case_id="ir_002", workflow_run_id="wf-2",
-                   outcome="sent", invoice_id="inv-2", detail=None),
-    ])
+    runner.run_case = AsyncMock(
+        side_effect=[
+            CaseResult(
+                case_id="ir_001",
+                workflow_run_id="wf-1",
+                outcome="policy_rejected",
+                invoice_id=None,
+                detail=None,
+            ),
+            CaseResult(
+                case_id="ir_002",
+                workflow_run_id="wf-2",
+                outcome="sent",
+                invoice_id="inv-2",
+                detail=None,
+            ),
+        ]
+    )
     rule_src = AsyncMock()
     rule_src.rule_ids_fired = AsyncMock(return_value={"A"})
     score_sink = AsyncMock()
@@ -123,17 +186,28 @@ async def test_failures_do_not_abort():
     eval_store = AsyncMock()
     eval_store.allocate_run = AsyncMock(return_value="ev_test")
     eval_store.finalize = AsyncMock()
-    invoice_lookup = AsyncMock(return_value={
-        "customer_id": "c1", "contract_id": None, "currency": "USD",
-        "source_type": "rate_card", "total_cents": 100,
-    })
+    invoice_lookup = AsyncMock(
+        return_value={
+            "customer_id": "c1",
+            "contract_id": None,
+            "currency": "USD",
+            "source_type": "rate_card",
+            "total_cents": 100,
+        }
+    )
 
     report = await run_eval(
-        runner=runner, cases=cases, suites=["functional"],
-        mode=Mode.train, git_sha="abc",
-        rule_fire_source=rule_src, score_sink=score_sink,
-        eval_run_store=eval_store, langfuse_client=MagicMock(),
-        invoice_lookup=invoice_lookup, holdout_justification=None,
+        runner=runner,
+        cases=cases,
+        suites=["functional"],
+        mode=Mode.train,
+        git_sha="abc",
+        rule_fire_source=rule_src,
+        score_sink=score_sink,
+        eval_run_store=eval_store,
+        langfuse_client=MagicMock(),
+        invoice_lookup=invoice_lookup,
+        holdout_justification=None,
         host_git_dirty=False,
     )
     assert report.suite_summaries["functional"].passes == 1

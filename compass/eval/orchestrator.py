@@ -41,6 +41,7 @@ class EvalReport:
 @dataclass
 class _CaseOutcome:
     """One case's result, collected concurrently and aggregated in order."""
+
     case: Case
     result: CaseResult | None
     suite_scores: list[tuple[str, bool, str]]  # (suite, passed, comment)
@@ -65,9 +66,11 @@ async def run_eval(
     concurrency: int = 1,
 ) -> EvalReport:
     run_id = await eval_run_store.allocate_run(
-        git_sha=git_sha, mode=mode.value,
+        git_sha=git_sha,
+        mode=mode.value,
         holdout_justification=holdout_justification,
-        policy_enabled=policy_enabled, suite_names=suites,
+        policy_enabled=policy_enabled,
+        suite_names=suites,
         host_git_dirty=host_git_dirty,
     )
     summaries: dict[str, SuiteSummary] = {s: SuiteSummary() for s in suites}
@@ -88,31 +91,36 @@ async def run_eval(
                 comment = f"workflow_error:{type(e).__name__}"
                 for s in suites:
                     await score_sink.write_score(
-                        run_id=run_id, item_id=case.case_id,
-                        name=s, value=0.0, comment=comment,
+                        run_id=run_id,
+                        item_id=case.case_id,
+                        name=s,
+                        value=0.0,
+                        comment=comment,
                     )
-                return _CaseOutcome(case=case, result=None, suite_scores=[],
-                                    error=f"{comment}:{e}")
+                return _CaseOutcome(case=case, result=None, suite_scores=[], error=f"{comment}:{e}")
             persisted = (
-                await invoice_lookup(result.invoice_id)
-                if result.invoice_id is not None else None
+                await invoice_lookup(result.invoice_id) if result.invoice_id is not None else None
             )
             suite_scores: list[tuple[str, bool, str]] = []
             for suite in suites:
                 score = await _run_suite(
-                    suite=suite, case=case, result=result,
-                    persisted=persisted, rule_fire_source=rule_fire_source,
+                    suite=suite,
+                    case=case,
+                    result=result,
+                    persisted=persisted,
+                    rule_fire_source=rule_fire_source,
                     langfuse_client=langfuse_client,
                 )
                 await score_sink.write_score(
-                    run_id=run_id, item_id=case.case_id,
-                    name=suite, value=1.0 if score.passed else 0.0,
+                    run_id=run_id,
+                    item_id=case.case_id,
+                    name=suite,
+                    value=1.0 if score.passed else 0.0,
                     comment=score.comment or None,
                     trace_id=result.trace_id,
                 )
                 suite_scores.append((suite, score.passed, score.comment))
-            return _CaseOutcome(case=case, result=result,
-                                suite_scores=suite_scores, error=None)
+            return _CaseOutcome(case=case, result=result, suite_scores=suite_scores, error=None)
 
     outcomes = await asyncio.gather(*(_process(c) for c in cases))
 
@@ -138,14 +146,18 @@ async def run_eval(
         total = summary.passes + summary.fails
         rate = summary.passes / total if total else 0.0
         await score_sink.write_run_score(
-            run_id=run_id, name=suite, value=rate,
+            run_id=run_id,
+            name=suite,
+            value=rate,
             comment=f"{summary.passes}/{total} passed",
         )
 
     await eval_run_store.finalize(run_id)
     return EvalReport(
-        run_id=run_id, mode=mode,
-        suite_summaries=summaries, case_results=case_results,
+        run_id=run_id,
+        mode=mode,
+        suite_summaries=summaries,
+        case_results=case_results,
     )
 
 
@@ -162,10 +174,14 @@ async def _run_suite(
         return await score_functional(case=case, result=result, persisted_invoice=persisted)
     if suite == "policy_compliance":
         return await score_policy_compliance(
-            case=case, result=result, rule_fire_source=rule_fire_source,
+            case=case,
+            result=result,
+            rule_fire_source=rule_fire_source,
         )
     if suite == "cost_latency":
         return await score_cost_latency(
-            case=case, result=result, langfuse_client=langfuse_client,
+            case=case,
+            result=result,
+            langfuse_client=langfuse_client,
         )
     raise ValueError(f"unknown suite: {suite}")

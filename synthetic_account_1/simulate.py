@@ -987,8 +987,10 @@ def _generate_ground_truth(
         desc_key_count[k] = desc_key_count.get(k, 0) + 1
 
     source_phrase = {
-        "contract": "contract", "rate_card": "rate-card",
-        "time_tracking": "time-tracking", "user_specified": "ad-hoc",
+        "contract": "contract",
+        "rate_card": "rate-card",
+        "time_tracking": "time-tracking",
+        "user_specified": "ad-hoc",
     }
 
     invoice_pool = sorted(
@@ -1018,24 +1020,25 @@ def _generate_ground_truth(
         if inv["source_type"] == "user_specified":
             amount = cast(int, inv["total_cents"])
             request = (
-                f"Send {customer['name']} the agreed "
-                f"${amount / 100:,.2f} invoice for: {desc}."
+                f"Send {customer['name']} the agreed ${amount / 100:,.2f} invoice for: {desc}."
             )
         else:
             request = f"Send {customer['name']} the invoice for: {desc}."
-        invoice_cases.append({
-            "case_id": f"ir_{len(invoice_cases) + 1:04d}",
-            "request": request,
-            "expected_outcome": "sent",
-            "expected_decline_reason": None,
-            "expected": {
-                "customer_id": inv["customer_id"],
-                "source_type": inv["source_type"],
-                "total_cents": inv["total_cents"],
-                "contract_id": inv.get("contract_id"),
-                "currency": inv["currency"],
-            },
-        })
+        invoice_cases.append(
+            {
+                "case_id": f"ir_{len(invoice_cases) + 1:04d}",
+                "request": request,
+                "expected_outcome": "sent",
+                "expected_decline_reason": None,
+                "expected": {
+                    "customer_id": inv["customer_id"],
+                    "source_type": inv["source_type"],
+                    "total_cents": inv["total_cents"],
+                    "contract_id": inv.get("contract_id"),
+                    "currency": inv["currency"],
+                },
+            }
+        )
         if len(invoice_cases) >= 120:
             break
 
@@ -1063,20 +1066,22 @@ def _generate_ground_truth(
         if not desc or desc_key_count[(cust, desc)] != 1:
             continue  # the answer must resolve to exactly one invoice
         clarify_seen.add((cust, src))
-        invoice_cases.append({
-            "case_id": f"ir_cl_{n_clarify + 1:04d}",
-            "request": f"Send {customer['name']} a {source_phrase.get(src, src)} invoice.",
-            "clarify_answer": desc,
-            "expected_outcome": "sent",
-            "expected_decline_reason": None,
-            "expected": {
-                "customer_id": inv["customer_id"],
-                "source_type": inv["source_type"],
-                "total_cents": inv["total_cents"],
-                "contract_id": inv.get("contract_id"),
-                "currency": inv["currency"],
-            },
-        })
+        invoice_cases.append(
+            {
+                "case_id": f"ir_cl_{n_clarify + 1:04d}",
+                "request": f"Send {customer['name']} a {source_phrase.get(src, src)} invoice.",
+                "clarify_answer": desc,
+                "expected_outcome": "sent",
+                "expected_decline_reason": None,
+                "expected": {
+                    "customer_id": inv["customer_id"],
+                    "source_type": inv["source_type"],
+                    "total_cents": inv["total_cents"],
+                    "contract_id": inv.get("contract_id"),
+                    "currency": inv["currency"],
+                },
+            }
+        )
         n_clarify += 1
         if n_clarify >= 16:
             break
@@ -1092,8 +1097,7 @@ def _generate_ground_truth(
     )
     # Clone only pure 'sent' cases (specific request, no clarification step).
     sent_cases = [
-        c for c in invoice_cases
-        if c["expected_outcome"] == "sent" and not c.get("clarify_answer")
+        c for c in invoice_cases if c["expected_outcome"] == "sent" and not c.get("clarify_answer")
     ]
     decline_seeds = [c for i, c in enumerate(sent_cases) if i >= 30 and i % 5 == 0]
     decline_seeds = decline_seeds[:24]  # 14 train + 10 holdout
@@ -1295,7 +1299,9 @@ def _upload_dataset_to_langfuse(dataset_name: str) -> None:
         n = 0
         for mode in (Mode.train, Mode.holdout):
             cases = load_corpus(
-                workflow="send_invoice", mode=mode, ground_truth_root=GROUND_TRUTH_DIR,
+                workflow="send_invoice",
+                mode=mode,
+                ground_truth_root=GROUND_TRUTH_DIR,
             )
             await sink.ensure_dataset(cases, split=mode.value)
             n += len(cases)

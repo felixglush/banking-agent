@@ -19,9 +19,14 @@ def _case(
         case_id="ir_0001",
         request="x",
         expected_outcome=expected_outcome,
-        expected=expected if expected is not None else {
-            "customer_id": "c1", "contract_id": None, "currency": "USD",
-            "source_type": "rate_card", "total_cents": 1_500_000,
+        expected=expected
+        if expected is not None
+        else {
+            "customer_id": "c1",
+            "contract_id": None,
+            "currency": "USD",
+            "source_type": "rate_card",
+            "total_cents": 1_500_000,
         },
         expected_fired_rules=[],
         expected_decline_reason=None,
@@ -54,8 +59,11 @@ async def test_sent_with_all_fields_matching_passes():
     case = _case()
     result = _result()
     persisted: dict[str, Any] = {
-        "customer_id": "c1", "contract_id": None, "currency": "USD",
-        "source_type": "rate_card", "total_cents": 1_500_000,
+        "customer_id": "c1",
+        "contract_id": None,
+        "currency": "USD",
+        "source_type": "rate_card",
+        "total_cents": 1_500_000,
     }
     score = await score_functional(case=case, result=result, persisted_invoice=persisted)
     assert score.passed is True
@@ -66,8 +74,11 @@ async def test_sent_with_field_mismatch_fails():
     case = _case()
     result = _result()
     persisted: dict[str, Any] = {
-        "customer_id": "c1", "contract_id": None, "currency": "USD",
-        "source_type": "rate_card", "total_cents": 9_999_999,
+        "customer_id": "c1",
+        "contract_id": None,
+        "currency": "USD",
+        "source_type": "rate_card",
+        "total_cents": 9_999_999,
     }
     score = await score_functional(case=case, result=result, persisted_invoice=persisted)
     assert score.passed is False

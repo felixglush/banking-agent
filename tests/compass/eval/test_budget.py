@@ -13,9 +13,11 @@ def _client_with_history(per_case_usds: list[float]) -> MagicMock:
     client = MagicMock()
     client.api = MagicMock()
     client.api.runs = MagicMock()
-    client.api.runs.list = MagicMock(return_value=MagicMock(
-        data=[MagicMock(total_cost=c * 100) for c in per_case_usds],
-    ))
+    client.api.runs.list = MagicMock(
+        return_value=MagicMock(
+            data=[MagicMock(total_cost=c * 100) for c in per_case_usds],
+        )
+    )
     return client
 
 
@@ -47,8 +49,10 @@ async def test_budget_exceeded_raises():
     client = _client_with_history([1.00, 1.00, 1.00, 1.00, 1.00])  # $1/case
     with pytest.raises(BudgetExceeded) as exc:
         await estimate_run_cost(
-            client=client, workflow="send_invoice",
-            case_count=100, heuristic_per_case_usd=0.30,
+            client=client,
+            workflow="send_invoice",
+            case_count=100,
+            heuristic_per_case_usd=0.30,
             cap_usd=40.00,
         )
     assert "$100" in str(exc.value)

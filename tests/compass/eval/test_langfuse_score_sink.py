@@ -23,7 +23,8 @@ def _client() -> MagicMock:
 
 def _case(case_id: str = "ir_0001") -> Case:
     return Case(
-        case_id=case_id, request="Send invoice for Acme Corp",
+        case_id=case_id,
+        request="Send invoice for Acme Corp",
         expected_outcome="sent",
         expected={"customer_id": "c1", "total_cents": 100},
         expected_fired_rules=["require_amount_source"],
@@ -50,12 +51,18 @@ async def test_write_score_links_run_item_then_scores_on_trace() -> None:
     client = _client()
     sink = LangfuseDatasetScoreSink(client=client, dataset_name="send_invoice_v0_1")
     await sink.write_score(
-        run_id="ev_abc", item_id="ir_0001",
-        name="functional", value=1.0, comment=None, trace_id="t_deadbeef",
+        run_id="ev_abc",
+        item_id="ir_0001",
+        name="functional",
+        value=1.0,
+        comment=None,
+        trace_id="t_deadbeef",
     )
 
     client.api.dataset_run_items.create.assert_called_once_with(
-        run_name="ev_abc", dataset_item_id="ir_0001", trace_id="t_deadbeef",
+        run_name="ev_abc",
+        dataset_item_id="ir_0001",
+        trace_id="t_deadbeef",
     )
     sc = client.create_score.call_args.kwargs
     assert sc["name"] == "functional"
@@ -72,8 +79,12 @@ async def test_run_item_created_once_per_case() -> None:
     sink = LangfuseDatasetScoreSink(client=client, dataset_name="send_invoice_v0_1")
     for suite in ("functional", "policy_compliance", "cost_latency"):
         await sink.write_score(
-            run_id="ev_abc", item_id="ir_0001",
-            name=suite, value=1.0, comment=None, trace_id="t_1",
+            run_id="ev_abc",
+            item_id="ir_0001",
+            name=suite,
+            value=1.0,
+            comment=None,
+            trace_id="t_1",
         )
     assert client.api.dataset_run_items.create.call_count == 1
     assert client.create_score.call_count == 3
@@ -84,12 +95,19 @@ async def test_write_run_score_anchors_to_dataset_run() -> None:
     sink = LangfuseDatasetScoreSink(client=client, dataset_name="send_invoice_v0_1")
     # First link a case so the dataset_run_id is captured.
     await sink.write_score(
-        run_id="ev_abc", item_id="ir_0001",
-        name="functional", value=1.0, comment=None, trace_id="t_1",
+        run_id="ev_abc",
+        item_id="ir_0001",
+        name="functional",
+        value=1.0,
+        comment=None,
+        trace_id="t_1",
     )
     client.create_score.reset_mock()
     await sink.write_run_score(
-        run_id="ev_abc", name="functional", value=0.667, comment="2/3 passed",
+        run_id="ev_abc",
+        name="functional",
+        value=0.667,
+        comment="2/3 passed",
     )
     sc = client.create_score.call_args.kwargs
     assert sc["dataset_run_id"] == "lf_run_123"
@@ -110,8 +128,11 @@ async def test_no_trace_id_skips_run_item_but_still_scores() -> None:
     client = _client()
     sink = LangfuseDatasetScoreSink(client=client, dataset_name="send_invoice_v0_1")
     await sink.write_score(
-        run_id="ev_abc", item_id="ir_0001",
-        name="functional", value=0.0, comment="workflow_error:RuntimeError",
+        run_id="ev_abc",
+        item_id="ir_0001",
+        name="functional",
+        value=0.0,
+        comment="workflow_error:RuntimeError",
         trace_id=None,
     )
     client.api.dataset_run_items.create.assert_not_called()

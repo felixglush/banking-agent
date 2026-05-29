@@ -24,11 +24,8 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from typing import TypeVar
 
 import pytest
-
-T = TypeVar("T")
 
 pytestmark = [pytest.mark.e2e, pytest.mark.asyncio]
 
@@ -41,7 +38,9 @@ _CASES = ["ir_0001", "ir_d_0001", "ir_pr_0001"]
 _DATASET = "send_invoice_v0_1"
 
 
-def _poll(fn: Callable[[], T | None], *, timeout: float = 90.0, interval: float = 3.0) -> T | None:
+def _poll[T](
+    fn: Callable[[], T | None], *, timeout: float = 90.0, interval: float = 3.0
+) -> T | None:
     """Call fn() until it returns truthy or timeout; return last result.
 
     Swallows exceptions (e.g. 404 before the object is ingested) and keeps
@@ -68,14 +67,23 @@ async def test_e2e_three_outcome_classes():
 
     proc = subprocess.run(
         [
-            sys.executable, "-m", "compass.eval",
-            "--workflow", "send_invoice",
-            "--mode", "train",
-            "--suites", "functional,policy_compliance,cost_latency",
-            "--cases", ",".join(_CASES),
+            sys.executable,
+            "-m",
+            "compass.eval",
+            "--workflow",
+            "send_invoice",
+            "--mode",
+            "train",
+            "--suites",
+            "functional,policy_compliance,cost_latency",
+            "--cases",
+            ",".join(_CASES),
             "--no-confirm",
         ],
-        capture_output=True, text=True, timeout=300, check=False,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
     )
     assert proc.returncode in (0, 1), f"unexpected exit {proc.returncode}: {proc.stderr}"
     m = re.search(r"run_id=(ev_\w+)", proc.stdout)

@@ -84,9 +84,7 @@ def _trace_output(event: "AuditEvent", outcome: str) -> dict[str, Any]:
         out["total_cents"] = event.payload.get("total_cents")
         return out
     detail = (
-        event.payload.get("notes")
-        or event.payload.get("reason")
-        or event.payload.get("message")
+        event.payload.get("notes") or event.payload.get("reason") or event.payload.get("message")
     )
     if detail is not None:
         out["detail"] = detail

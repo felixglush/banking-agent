@@ -24,9 +24,13 @@ def _case(case_id: str = "ir_0001", outcome: str = "sent") -> Case:
 async def test_sent_outcome_sends_approve_signal():
     mock_handle = AsyncMock()
     mock_handle.signal = AsyncMock()
-    mock_handle.result = AsyncMock(return_value=MagicMock(
-        outcome="sent", invoice_id="inv-test", detail=None,
-    ))
+    mock_handle.result = AsyncMock(
+        return_value=MagicMock(
+            outcome="sent",
+            invoice_id="inv-test",
+            detail=None,
+        )
+    )
     mock_client = AsyncMock()
     mock_client.start_workflow = AsyncMock(return_value=mock_handle)
 
@@ -43,9 +47,13 @@ async def test_sent_outcome_sends_approve_signal():
 async def test_declined_outcome_sends_decline_signal():
     mock_handle = AsyncMock()
     mock_handle.signal = AsyncMock()
-    mock_handle.result = AsyncMock(return_value=MagicMock(
-        outcome="declined", invoice_id=None, detail="approver said no",
-    ))
+    mock_handle.result = AsyncMock(
+        return_value=MagicMock(
+            outcome="declined",
+            invoice_id=None,
+            detail="approver said no",
+        )
+    )
     mock_client = AsyncMock()
     mock_client.start_workflow = AsyncMock(return_value=mock_handle)
 
@@ -60,9 +68,13 @@ async def test_policy_rejected_does_not_send_signal():
     """policy_rejected cases short-circuit before wait_condition; no signal needed."""
     mock_handle = AsyncMock()
     mock_handle.signal = AsyncMock()
-    mock_handle.result = AsyncMock(return_value=MagicMock(
-        outcome="policy_rejected", invoice_id=None, detail="blocked",
-    ))
+    mock_handle.result = AsyncMock(
+        return_value=MagicMock(
+            outcome="policy_rejected",
+            invoice_id=None,
+            detail="blocked",
+        )
+    )
     mock_client = AsyncMock()
     mock_client.start_workflow = AsyncMock(return_value=mock_handle)
 
@@ -74,9 +86,13 @@ async def test_policy_rejected_does_not_send_signal():
 
 async def test_no_langfuse_leaves_trace_id_none():
     mock_handle = AsyncMock()
-    mock_handle.result = AsyncMock(return_value=MagicMock(
-        outcome="sent", invoice_id="inv-1", detail=None,
-    ))
+    mock_handle.result = AsyncMock(
+        return_value=MagicMock(
+            outcome="sent",
+            invoice_id="inv-1",
+            detail=None,
+        )
+    )
     mock_client = AsyncMock()
     mock_client.start_workflow = AsyncMock(return_value=mock_handle)
 
@@ -90,15 +106,21 @@ async def test_langfuse_client_seeds_deterministic_trace_id():
 
     mock_handle = AsyncMock()
     mock_handle.signal = AsyncMock()
-    mock_handle.result = AsyncMock(return_value=MagicMock(
-        outcome="sent", invoice_id="inv-1", detail=None,
-    ))
+    mock_handle.result = AsyncMock(
+        return_value=MagicMock(
+            outcome="sent",
+            invoice_id="inv-1",
+            detail=None,
+        )
+    )
     mock_client = AsyncMock()
     mock_client.start_workflow = AsyncMock(return_value=mock_handle)
     lf = MagicMock()  # MagicMock provides the context-manager protocol
 
     runner = TemporalWorkflowRunner(
-        client=mock_client, task_queue="t", langfuse_client=lf,
+        client=mock_client,
+        task_queue="t",
+        langfuse_client=lf,
     )
     result = await runner.run_case(_case())
 

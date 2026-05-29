@@ -75,8 +75,13 @@ def test_input_set_from_user_message() -> None:
 
 
 def test_no_input_attr_when_user_message_absent() -> None:
-    attrs = _capture(_event(event_kind="executed", phase="audit_validation",
-                            payload={"invoice_id": "inv_1", "total_cents": 5000}))
+    attrs = _capture(
+        _event(
+            event_kind="executed",
+            phase="audit_validation",
+            payload={"invoice_id": "inv_1", "total_cents": 5000},
+        )
+    )
     assert LangfuseOtelSpanAttributes.TRACE_INPUT not in attrs
 
 
@@ -97,8 +102,7 @@ def test_output_sent_carries_outcome_and_invoice() -> None:
 
 def test_output_declined_carries_detail() -> None:
     attrs = _capture(
-        _event(phase="pre_execute", event_kind="declined",
-               payload={"notes": "amount too high"})
+        _event(phase="pre_execute", event_kind="declined", payload={"notes": "amount too high"})
     )
     out = json.loads(attrs[LangfuseOtelSpanAttributes.TRACE_OUTPUT])  # type: ignore[arg-type]
     assert out["outcome"] == "declined"
@@ -107,8 +111,7 @@ def test_output_declined_carries_detail() -> None:
 
 def test_output_timeout_distinguished_from_decline() -> None:
     attrs = _capture(
-        _event(phase="pre_execute", event_kind="declined",
-               payload={"reason": "approval_timeout"})
+        _event(phase="pre_execute", event_kind="declined", payload={"reason": "approval_timeout"})
     )
     out = json.loads(attrs[LangfuseOtelSpanAttributes.TRACE_OUTPUT])  # type: ignore[arg-type]
     assert out["outcome"] == "timeout"
@@ -116,8 +119,11 @@ def test_output_timeout_distinguished_from_decline() -> None:
 
 def test_output_policy_rejected() -> None:
     attrs = _capture(
-        _event(phase="pre_action_proposal", event_kind="policy_rejected",
-               payload={"message": "prohibit_exceed_contract_cap tripped"})
+        _event(
+            phase="pre_action_proposal",
+            event_kind="policy_rejected",
+            payload={"message": "prohibit_exceed_contract_cap tripped"},
+        )
     )
     out = json.loads(attrs[LangfuseOtelSpanAttributes.TRACE_OUTPUT])  # type: ignore[arg-type]
     assert out["outcome"] == "policy_rejected"
@@ -125,18 +131,29 @@ def test_output_policy_rejected() -> None:
 
 
 def test_output_agent_no_output_maps_by_phase() -> None:
-    early = _capture(_event(phase="input_validation", event_kind="agent_no_output",
-                            payload={"user_message": "hi"}))
-    late = _capture(_event(phase="pre_action_proposal", event_kind="agent_no_output",
-                           payload={"user_message": "hi"}))
+    early = _capture(
+        _event(
+            phase="input_validation", event_kind="agent_no_output", payload={"user_message": "hi"}
+        )
+    )
+    late = _capture(
+        _event(
+            phase="pre_action_proposal",
+            event_kind="agent_no_output",
+            payload={"user_message": "hi"},
+        )
+    )
     assert json.loads(early[LangfuseOtelSpanAttributes.TRACE_OUTPUT])["outcome"] == "unsupported"  # type: ignore[arg-type]
     assert json.loads(late[LangfuseOtelSpanAttributes.TRACE_OUTPUT])["outcome"] == "policy_rejected"  # type: ignore[arg-type]
 
 
 def test_no_output_attr_for_non_terminal_event() -> None:
     attrs = _capture(
-        _event(phase="pre_execute", event_kind="approval_signal",
-               payload={"approval": {"approved": True}})
+        _event(
+            phase="pre_execute",
+            event_kind="approval_signal",
+            payload={"approval": {"approved": True}},
+        )
     )
     assert LangfuseOtelSpanAttributes.TRACE_OUTPUT not in attrs
 

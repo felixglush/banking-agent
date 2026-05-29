@@ -12,8 +12,7 @@ GROUND_TRUTH = REPO_ROOT / "synthetic_account_1" / "ground_truth"
 
 
 def test_load_train_corpus():
-    cases = load_corpus(workflow="send_invoice", mode=Mode.train,
-                        ground_truth_root=GROUND_TRUTH)
+    cases = load_corpus(workflow="send_invoice", mode=Mode.train, ground_truth_root=GROUND_TRUTH)
     assert len(cases) == 119
     assert {c.expected_outcome for c in cases} == {"sent", "declined", "policy_rejected"}
     # Clarification round-trip cases are 'sent' but carry a clarify_answer.
@@ -21,8 +20,7 @@ def test_load_train_corpus():
 
 
 def test_load_holdout_corpus():
-    cases = load_corpus(workflow="send_invoice", mode=Mode.holdout,
-                        ground_truth_root=GROUND_TRUTH)
+    cases = load_corpus(workflow="send_invoice", mode=Mode.holdout, ground_truth_root=GROUND_TRUTH)
     assert len(cases) == 51
 
 
@@ -33,6 +31,9 @@ def test_holdout_chroot_train_mode_refuses_holdout_path(tmp_path: Path):
     fake_holdout.mkdir(parents=True)
     (fake_holdout / "invoice_resolution_labels.jsonl").write_text("")
     with pytest.raises(HoldoutAccessError):
-        load_corpus(workflow="send_invoice", mode=Mode.train,
-                    ground_truth_root=tmp_path / "ground_truth",
-                    _force_split="holdout")
+        load_corpus(
+            workflow="send_invoice",
+            mode=Mode.train,
+            ground_truth_root=tmp_path / "ground_truth",
+            _force_split="holdout",
+        )

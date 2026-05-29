@@ -29,7 +29,8 @@ async def test_holdout_cap_at_3(db_dsn: str) -> None:
     store = PostgresEvalRunStore(dsn=db_dsn)
     for _ in range(3):
         await store.allocate_run(
-            git_sha=sha, mode="holdout",
+            git_sha=sha,
+            mode="holdout",
             holdout_justification="release smoke",
             policy_enabled=True,
             suite_names=["functional"],
@@ -37,7 +38,8 @@ async def test_holdout_cap_at_3(db_dsn: str) -> None:
         )
     with pytest.raises(HoldoutCapExceeded):
         await store.allocate_run(
-            git_sha=sha, mode="holdout",
+            git_sha=sha,
+            mode="holdout",
             holdout_justification="release smoke",
             policy_enabled=True,
             suite_names=["functional"],
@@ -51,7 +53,8 @@ async def test_concurrent_inserts_hit_unique_constraint(db_dsn: str) -> None:
     store = PostgresEvalRunStore(dsn=db_dsn)
     coros = [
         store.allocate_run(
-            git_sha=sha, mode="holdout",
+            git_sha=sha,
+            mode="holdout",
             holdout_justification="race",
             policy_enabled=True,
             suite_names=["functional"],
@@ -71,14 +74,16 @@ async def test_link_pair_round_trip(db_dsn: str) -> None:
     store = PostgresEvalRunStore(dsn=db_dsn)
     sha = f"sha_pair_{uuid.uuid4().hex}"
     a = await store.allocate_run(
-        git_sha=sha, mode="train",
+        git_sha=sha,
+        mode="train",
         holdout_justification=None,
         policy_enabled=True,
         suite_names=["functional"],
         host_git_dirty=False,
     )
     b = await store.allocate_run(
-        git_sha=sha, mode="train",
+        git_sha=sha,
+        mode="train",
         holdout_justification=None,
         policy_enabled=False,
         suite_names=["functional"],

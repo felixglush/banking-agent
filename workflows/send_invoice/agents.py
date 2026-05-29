@@ -215,9 +215,7 @@ def build_main_agent(
     ``temporalio.contrib.openai_agents.workflow.stateful_mcp_server("bank")``
     inside ``workflow.run``; calling that outside a workflow raises.
     """
-    tools: list[Tool] = (
-        [compute_line_total, compute_invoice_total] if use_invoice_tool else []
-    )
+    tools: list[Tool] = [compute_line_total, compute_invoice_total] if use_invoice_tool else []
     return Agent[None](
         name="send_invoice_main",
         instructions=_instructions(prompt_variant, use_invoice_tool),
