@@ -133,3 +133,55 @@ async def test_langfuse_client_seeds_deterministic_trace_id():
     io = span.set_trace_io.call_args.kwargs
     assert io["output"]["outcome"] == "sent"
     assert io["output"]["invoice_id"] == "inv-1"
+
+
+async def test_trace_output_includes_tool_calls_from_workflow_query():
+    # The agent's LLM/tool spans orphan into separate traces (temporalio use_otel
+    # activity-boundary limitation), so the runner queries the workflow for the
+    # tool calls + reasoning and folds them into the root observation's trace
+    # output — the one reliable trace surface.
+    mock_handle = AsyncMock()
+    mock_handle.signal = AsyncMock()
+    mock_handle.result = AsyncMock(
+        return_value=MagicMock(outcome="sent", invoice_id="inv-1", detail=None)
+    )
+    mock_handle.query = AsyncMock(
+        return_value={
+            "tool_calls": [
+                {"tool_name": "get_active_contract", "args": {"c": 1}, "result": {"id": "ct1"}}
+            ],
+            "reasoning": "looked up the active contract",
+        }
+    )
+    mock_client = AsyncMock()
+    mock_client.start_workflow = AsyncMock(return_value=mock_handle)
+    lf = MagicMock()
+
+    runner = TemporalWorkflowRunner(client=mock_client, task_queue="t", langfuse_client=lf)
+    await runner.run_case(_case())
+
+    span = lf.start_as_current_observation.return_value.__enter__.return_value
+    out = span.set_trace_io.call_args.kwargs["output"]
+    assert [t["tool_name"] for t in out["tool_calls"]] == ["get_active_contract"]
+    assert out["tool_calls"][0]["result"] == {"id": "ct1"}
+    assert out["reasoning"] == "looked up the active contract"
+
+
+async def test_trace_output_omits_tool_calls_when_query_empty():
+    mock_handle = AsyncMock()
+    mock_handle.signal = AsyncMock()
+    mock_handle.result = AsyncMock(
+        return_value=MagicMock(outcome="sent", invoice_id="inv-1", detail=None)
+    )
+    mock_handle.query = AsyncMock(return_value={"tool_calls": [], "reasoning": ""})
+    mock_client = AsyncMock()
+    mock_client.start_workflow = AsyncMock(return_value=mock_handle)
+    lf = MagicMock()
+
+    runner = TemporalWorkflowRunner(client=mock_client, task_queue="t", langfuse_client=lf)
+    await runner.run_case(_case())
+
+    span = lf.start_as_current_observation.return_value.__enter__.return_value
+    out = span.set_trace_io.call_args.kwargs["output"]
+    assert "tool_calls" not in out
+    assert "reasoning" not in out

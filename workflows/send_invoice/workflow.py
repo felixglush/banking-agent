@@ -127,6 +127,16 @@ class SendInvoiceWorkflow:
             return
         self._approval = decision
 
+    @workflow.query(name="agent_activity")
+    def agent_activity(self) -> dict[str, Any]:
+        """Read-only: the agent's tool calls + reasoning for trace enrichment.
+
+        The OpenInference LLM/tool spans orphan into separate Langfuse traces
+        (temporalio use_otel activity-boundary limitation), so the eval runner
+        queries this after completion and folds it into the trace's root
+        observation — the only reliable trace surface."""
+        return {"tool_calls": self._tool_calls, "reasoning": self._reasoning_text}
+
     @workflow.run
     async def run(self, req: SendInvoiceRequest) -> WorkflowResult:
         run_id = workflow.info().workflow_id
