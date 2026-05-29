@@ -1,0 +1,20 @@
+# Stage 7 — pinned per-workflow knobs.
+# Re-pinning requires a writeup; see build-plan §3.
+version: 1
+
+send_invoice:
+  temperature: 0.2
+  cost_heuristic_usd_per_case: 0.30
+  holdout_budget_usd: 40.00
+  cost_latency_trace_poll_timeout_seconds: 60   # cost_latency suite only
+  warn_per_case_usd: 0.50
+  warn_p95_latency_ms: 30000
+
+suites:
+  functional:
+    field_tolerances:
+      total_cents: 0
+  policy_compliance:
+    assert_set_equality: true
+  cost_latency:
+    enabled: true

@@ -1,0 +1,124 @@
+"""Default ScoreSink impl: writes per-case suite scores to a Langfuse
+Dataset Run.
+
+Three Langfuse objects back one eval run:
+
+* a **Dataset** (one per workflow, ``send_invoice_v0_1``) holding one
+  **DatasetItem** per case (``id = case_id``, ``input`` the request,
+  ``expected_output`` the ground truth) — uploaded once via
+  :meth:`ensure_dataset`.
+* a **DatasetRunItem** per case, created lazily on the first score, linking
+  the case's trace to the run named ``run_id``.
+* one **Score** per (case, suite), anchored to the case's trace so it
+  surfaces under the run in the Experiments UI.
+
+The trace id is seeded deterministically by the runner (see
+``compass.eval.runner``); the sink links it without a tag lookup. When a
+case has no trace (tracing disabled, or the workflow raised before a run
+id existed), scores still land — anchored to ``session_id = run_id`` so
+nothing is lost.
+"""
+
+from collections.abc import Iterable
+from typing import Any
+
+from compass.eval.types import Case
+
+
+class LangfuseDatasetScoreSink:
+    def __init__(self, *, client: Any, dataset_name: str) -> None:
+        self._client = client
+        self._dataset_name = dataset_name
+        # (run_id, item_id) already linked to a DatasetRunItem this process.
+        self._linked: set[tuple[str, str]] = set()
+        # our run_id -> Langfuse dataset_run_id (captured from the run item).
+        # Needed to anchor run-level aggregate scores; the dataset run is
+        # created implicitly by the first run item.
+        self._dataset_run_ids: dict[str, str] = {}
+
+    async def ensure_dataset(self, cases: Iterable[Case], *, split: str | None = None) -> None:
+        """Upsert the dataset and one item per case. Idempotent: items
+        upsert on ``id = case_id``, so re-running an eval reuses them.
+
+        ``split`` (train | holdout) is recorded in item metadata so a single
+        dataset can hold both splits distinguishably."""
+        self._client.create_dataset(name=self._dataset_name)
+        for case in cases:
+            metadata: dict[str, Any] = {
+                "expected_outcome": case.expected_outcome,
+                "expected_decline_reason": case.expected_decline_reason,
+                "expected_fired_rules": case.expected_fired_rules,
+            }
+            if split is not None:
+                metadata["split"] = split
+            self._client.create_dataset_item(
+                dataset_name=self._dataset_name,
+                id=case.case_id,
+                input=case.request,
+                expected_output=case.expected,
+                metadata=metadata,
+            )
+
+    async def write_score(
+        self,
+        *,
+        run_id: str,
+        item_id: str,
+        name: str,
+        value: float,
+        comment: str | None,
+        trace_id: str | None = None,
+    ) -> None:
+        if trace_id is not None and (run_id, item_id) not in self._linked:
+            run_item = self._client.api.dataset_run_items.create(
+                run_name=run_id,
+                dataset_item_id=item_id,
+                trace_id=trace_id,
+            )
+            self._linked.add((run_id, item_id))
+            dataset_run_id = getattr(run_item, "dataset_run_id", None)
+            if dataset_run_id is not None:
+                self._dataset_run_ids[run_id] = dataset_run_id
+
+        # Langfuse requires a score to anchor to exactly one of trace_id /
+        # session_id / dataset_run_id. We anchor to the trace (the run item
+        # already links it into the Dataset Run, so the score surfaces under
+        # the run); with no trace, fall back to the run as a Session so the
+        # score is never lost.
+        anchor: dict[str, str] = (
+            {"trace_id": trace_id} if trace_id is not None else {"session_id": run_id}
+        )
+        self._client.create_score(
+            name=name,
+            value=value,
+            comment=comment,
+            metadata={
+                "compass_eval_run_id": run_id,
+                "case_id": item_id,
+                "dataset": self._dataset_name,
+            },
+            **anchor,
+        )
+
+    async def write_run_score(
+        self,
+        *,
+        run_id: str,
+        name: str,
+        value: float,
+        comment: str | None,
+    ) -> None:
+        # Anchor to the dataset run so it shows as the run's headline
+        # performance in the Experiments view. Requires the run to exist,
+        # which it does once any case linked a run item; skip otherwise.
+        dataset_run_id = self._dataset_run_ids.get(run_id)
+        if dataset_run_id is None:
+            return
+        self._client.create_score(
+            name=name,
+            value=value,
+            comment=comment,
+            data_type="NUMERIC",
+            dataset_run_id=dataset_run_id,
+            metadata={"compass_eval_run_id": run_id, "dataset": self._dataset_name},
+        )

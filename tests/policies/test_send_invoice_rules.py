@@ -80,6 +80,7 @@ async def test_happy_proposal_permits_all_pre_action_proposal_rules(
         "invoice_amount_cap",
         "require_amount_source",
         "require_evidence_citation",
+        "contract_must_exist",
         "contract_consistency",
         "prohibit_exceed_contract_cap",
         "currency_consistency",
@@ -105,6 +106,12 @@ def _mut_empty_source_refs(ctx: dict[str, Any]) -> None:
     ctx["proposal"]["line_items"][0]["source_refs"] = []
 
 
+def _mut_hallucinated_contract(ctx: dict[str, Any]) -> None:
+    # Proposal cites a contract the agent never resolved (the resolved one is
+    # ct_alpha_current) — models an agent-hallucinated contract_id.
+    ctx["proposal"]["contract_id"] = "ct_does_not_exist"
+
+
 def _mut_currency_mismatch(ctx: dict[str, Any]) -> None:
     ctx["proposal"]["currency"] = "EUR"  # contract is USD
 
@@ -126,6 +133,7 @@ def _mut_rate_card_currency_mismatch(ctx: dict[str, Any]) -> None:
         (_mut_pending_kyc, "customer_kyc_verified"),
         (_mut_invalid_source_type, "require_amount_source"),
         (_mut_empty_source_refs, "require_evidence_citation"),
+        (_mut_hallucinated_contract, "contract_must_exist"),
         (_mut_currency_mismatch, "contract_consistency"),
         (_mut_exceed_cap, "prohibit_exceed_contract_cap"),
         (_mut_rate_card_currency_mismatch, "currency_consistency"),

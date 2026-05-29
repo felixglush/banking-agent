@@ -224,3 +224,58 @@ CREATE TABLE IF NOT EXISTS eval_runs (
 );
 
 CREATE INDEX IF NOT EXISTS eval_runs_git_sha_idx ON eval_runs (git_sha);
+
+-- ---------------------------------------------------------------------
+-- Stage 7 additions: ablation pairing, suite tracking, mode-gate
+-- atomicity. See docs/superpowers/specs/2026-05-28-stage-7-eval-harness-design.md.
+-- ---------------------------------------------------------------------
+
+ALTER TABLE eval_runs
+  ADD COLUMN IF NOT EXISTS paired_run_id  TEXT NULL REFERENCES eval_runs(run_id),
+  ADD COLUMN IF NOT EXISTS policy_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+  ADD COLUMN IF NOT EXISTS suite_names    TEXT[] NOT NULL DEFAULT '{}',
+  ADD COLUMN IF NOT EXISTS host_git_dirty BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- UNIQUE constraints create an underlying index; re-running raises
+-- ``duplicate_table`` for the index even when ``duplicate_object`` would
+-- catch the constraint itself. Catch both.
+DO $$ BEGIN
+  ALTER TABLE eval_runs
+    ADD CONSTRAINT eval_runs_holdout_counter_unique
+      UNIQUE (git_sha, commit_holdout_run_no);
+EXCEPTION WHEN duplicate_object OR duplicate_table THEN END $$;
+
+DO $$ BEGIN
+  ALTER TABLE eval_runs
+    ADD CONSTRAINT eval_runs_justification_required
+      CHECK (mode = 'train' OR length(trim(holdout_justification)) > 0);
+EXCEPTION WHEN duplicate_object THEN END $$;
+
+DO $$ BEGIN
+  ALTER TABLE eval_runs
+    ADD CONSTRAINT eval_runs_suite_names_valid
+      CHECK (suite_names <@ ARRAY['functional','policy_compliance','cost_latency']::text[]);
+EXCEPTION WHEN duplicate_object THEN END $$;
+
+COMMENT ON COLUMN eval_runs.run_id IS
+  'Stable identifier (uuid4 hex). Used as the Langfuse Dataset Run name; the join key from Postgres to Langfuse for the run.';
+COMMENT ON COLUMN eval_runs.git_sha IS
+  'HEAD commit at run start. Required for the per-commit holdout-run counter (build-plan §0).';
+COMMENT ON COLUMN eval_runs.mode IS
+  'train | holdout. Holdout mode requires holdout_justification and increments commit_holdout_run_no.';
+COMMENT ON COLUMN eval_runs.holdout_justification IS
+  'Free-text reason a holdout run was invoked. Required when mode=holdout; refused otherwise.';
+COMMENT ON COLUMN eval_runs.commit_holdout_run_no IS
+  '1..3 — ordinal of this holdout run for this git_sha. UNIQUE(git_sha, commit_holdout_run_no) enforces the cap. NULL when mode=train.';
+COMMENT ON COLUMN eval_runs.paired_run_id IS
+  'Self-FK to the paired ablation run (policy-on ↔ policy-off). NULL when standalone.';
+COMMENT ON COLUMN eval_runs.policy_enabled IS
+  'FALSE when COMPASS_POLICY_DISABLE=1 during the run. Determines which side of an ablation pair this row represents.';
+COMMENT ON COLUMN eval_runs.suite_names IS
+  'Suite list executed in this run. A paired-run report asserts both sides ran the same suite set before computing lift.';
+COMMENT ON COLUMN eval_runs.host_git_dirty IS
+  'TRUE if the working tree had uncommitted changes when the run started. Soft warning surfaced in reports.';
+COMMENT ON COLUMN eval_runs.started_at IS
+  'Wall-clock start of the harness invocation. Used for cost/latency rollups.';
+COMMENT ON COLUMN eval_runs.finished_at IS
+  'NULL while in flight or if crashed; set on clean completion. Rows are never deleted.';

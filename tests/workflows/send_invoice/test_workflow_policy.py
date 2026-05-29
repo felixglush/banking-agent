@@ -163,7 +163,7 @@ async def test_happy_proposal_permits_and_writes_snapshot() -> None:
     assert out.rule_ids_fired == []
     assert out.escalations == []
     assert out.policy_hash == hash_rules(RULES)
-    assert out.next_sequence_no == 9  # 8 pre_action_proposal rule_skipped events + 1
+    assert out.next_sequence_no == 10  # 9 pre_action_proposal rule_skipped events + 1
 
     rows = await _fetch_audit(run_id)
     assert all(r["event_kind"] == "rule_skipped" for r in rows)
@@ -173,6 +173,7 @@ async def test_happy_proposal_permits_and_writes_snapshot() -> None:
         "invoice_amount_cap",
         "require_amount_source",
         "require_evidence_citation",
+        "contract_must_exist",
         "contract_consistency",
         "prohibit_exceed_contract_cap",
         "currency_consistency",
@@ -486,6 +487,91 @@ async def test_policy_snapshot_idempotent_across_runs() -> None:
             )
         )
     assert await _fetch_snapshot_count(hash_rules(RULES)) == 1
+
+
+# ---------------------------------------------------------------------
+# sequence-tip on the error/return path: the workflow must learn the
+# real next-free sequence number instead of guessing, so a blocked
+# attempt's rule rows never collide with the next write.
+# ---------------------------------------------------------------------
+
+
+async def test_block_carries_next_sequence_no_in_details() -> None:
+    """A policy block reports its next-free sequence number in the
+    ApplicationError details, equal to one past the highest row it wrote."""
+    run_id = _new_workflow_id()
+    with pytest.raises(ApplicationError) as exc:
+        await evaluate_policy(
+            EvaluatePolicyInput(
+                workflow_run_id=run_id,
+                starting_sequence_no=1,
+                phase=Phase.input_validation.value,
+                context=out_of_scope_input_validation_ctx(),
+            )
+        )
+    details = exc.value.details[0]
+    assert isinstance(details, dict)
+    rows = await _fetch_audit(run_id)
+    assert details["next_sequence_no"] == max(r["sequence_no"] for r in rows) + 1
+
+
+async def test_block_next_sequence_no_respects_starting_offset() -> None:
+    """The reported tip honors a non-1 starting_sequence_no — the rows
+    begin at the offset and the tip is one past the last."""
+    run_id = _new_workflow_id()
+    ctx = happy_pre_action_proposal_ctx()
+    ctx["resolved_entities"]["customer"] = None  # trips customer_must_exist
+
+    with pytest.raises(ApplicationError) as exc:
+        await evaluate_policy(
+            EvaluatePolicyInput(
+                workflow_run_id=run_id,
+                starting_sequence_no=5,
+                phase=Phase.pre_action_proposal.value,
+                context=ctx,
+            )
+        )
+    details = exc.value.details[0]
+    rows = await _fetch_audit(run_id)
+    assert min(r["sequence_no"] for r in rows) == 5
+    assert details["next_sequence_no"] == max(r["sequence_no"] for r in rows) + 1
+
+
+async def test_audit_log_returns_next_tip_non_terminal() -> None:
+    """A plain (non-terminal) audit_log write returns one past its row."""
+    run_id = _new_workflow_id()
+    tip = await audit_log(
+        AuditEvent(
+            workflow_run_id=run_id,
+            sequence_no=7,
+            phase="pre_execute",
+            event_kind="approval_signal",
+            payload={},
+        )
+    )
+    assert tip == 8
+
+
+async def test_audit_log_terminal_returns_tip_past_rule_rows() -> None:
+    """A terminal audit_log write that emits audit_validation rule rows
+    returns a tip past every row it wrote, not just the terminal slot."""
+    run_id = _new_workflow_id()
+    tip = await audit_log(
+        AuditEvent(
+            workflow_run_id=run_id,
+            sequence_no=1,
+            phase="audit_validation",
+            event_kind="executed",
+            payload={"invoice_id": "inv-x", "total_cents": 80000},
+            decision="permit",
+            is_terminal_event=True,
+            policy_hash_for_validation="",  # trips audit_has_policy_version
+            tool_calls_for_validation=[],  # trips audit_has_data_sources
+        )
+    )
+    rows = await _fetch_audit(run_id)
+    assert tip == max(r["sequence_no"] for r in rows) + 1
+    assert tip > 2  # at least one rule row landed beyond the terminal row
 
 
 # ---------------------------------------------------------------------

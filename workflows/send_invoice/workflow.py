@@ -33,6 +33,7 @@ docs/superpowers/specs/2026-05-27-stage-6-intent-classifier-design.md:
 """
 
 from datetime import timedelta
+from typing import Any, cast
 
 from temporalio import workflow
 from temporalio.common import RetryPolicy
@@ -51,6 +52,7 @@ with workflow.unsafe.imports_passed_through():
         audit_log,
         evaluate_policy,
         execute_send,
+        resolve_customer_contract,
     )
     from workflows.send_invoice.agents import build_main_agent
     from workflows.send_invoice.context import (
@@ -62,22 +64,85 @@ with workflow.unsafe.imports_passed_through():
     from workflows.send_invoice.scope_gate import build_scope_gate_agent
     from workflows.send_invoice.types import (
         ApprovalDecision,
+        ClarificationResponse,
         SendInvoiceRequest,
         WorkflowResult,
     )
 
-_POLICY_DECISION_RETRY = RetryPolicy(maximum_attempts=1)
+# evaluate_policy retries transient infra errors (DB blips → the activity's
+# PolicyInfraError, non_retryable=False) but never a deterministic policy
+# decision: re-running a block on the same context blocks again. The activity
+# already marks PolicyDecisionError non_retryable=True; listing it here names
+# that intent at the call site too. A bare maximum_attempts=1 would have
+# capped *every* failure at one attempt, making the retryable classification
+# dead code.
+_POLICY_ACTIVITY_RETRY = RetryPolicy(
+    initial_interval=timedelta(seconds=1),
+    backoff_coefficient=2.0,
+    maximum_attempts=5,
+    non_retryable_error_types=["PolicyDecisionError"],
+)
+
+
+def _heal_feedback(cause: ApplicationError | None) -> str:
+    """Build agent-facing feedback from a PolicyDecisionError's violations.
+
+    Pure/deterministic — runs in the workflow. Falls back to a generic
+    message if the structured details aren't available."""
+    msgs: list[str] = []
+    try:
+        raw: object = cause.details[0] if cause and cause.details else {}
+        if isinstance(raw, dict):
+            violations = cast(dict[str, Any], raw).get("violations", [])
+            if isinstance(violations, list):
+                for v in cast(list[Any], violations):
+                    if isinstance(v, dict):
+                        m = cast(dict[str, Any], v).get("message")
+                        if m:
+                            msgs.append(str(m))
+    except Exception:  # noqa: BLE001 — feedback is best-effort
+        pass
+    issues = "; ".join(msgs) if msgs else "policy rejected your proposal"
+    return (
+        "\n\nIMPORTANT: your previous proposal was REJECTED by policy and was "
+        f"NOT sent. Problems: {issues}. Produce a corrected InvoiceProposal that "
+        "fixes every problem above. Ground every line item and any contract_id "
+        "in MCP tool output; never return an empty proposal or a placeholder total."
+    )
+
+
+def _tip_from_error(cause: ApplicationError | None) -> int | None:
+    """The next-free sequence number the policy activity reached before it
+    raised, read from the PolicyDecisionError details. None if absent — an
+    infra failure that wrote nothing structured, or an older activity.
+    Pure/deterministic — runs in the workflow."""
+    try:
+        raw: object = cause.details[0] if cause and cause.details else None
+        if isinstance(raw, dict):
+            n = cast(dict[str, Any], raw).get("next_sequence_no")
+            if isinstance(n, int):
+                return n
+    except Exception:  # noqa: BLE001 — best-effort counter sync
+        pass
+    return None
 
 
 @workflow.defn(name="SendInvoiceWorkflow")
 class SendInvoiceWorkflow:
     def __init__(self) -> None:
         self._approval: ApprovalDecision | None = None
+        self._clarification: ClarificationResponse | None = None
         self._next_seq = 0
         self._proposal_hash: str | None = None
         self._policy_hash: str | None = None
         self._tool_calls: list[ToolCallRecord] = []
         self._reasoning_text: str = ""
+
+    @workflow.signal(name="clarify")
+    async def clarify(self, response: ClarificationResponse) -> None:
+        # First answer wins; later ones are ignored (buffered signals are safe).
+        if self._clarification is None:
+            self._clarification = response
 
     @workflow.signal(name="approve")
     async def approve(self, decision: ApprovalDecision) -> None:
@@ -129,14 +194,15 @@ class SendInvoiceWorkflow:
                     context=input_ctx,
                 ),
                 start_to_close_timeout=timedelta(seconds=30),
-                retry_policy=_POLICY_DECISION_RETRY,
+                retry_policy=_POLICY_ACTIVITY_RETRY,
             )
         except ActivityError as e:
             cause = e.cause if isinstance(e.cause, ApplicationError) else None
             err_type = cause.type if cause else None
-            # One rule at this phase today; bump conservatively past
-            # any sink writes the activity made before raising.
-            self._next_seq += 2
+            # Sync to the tip the activity reached; fall back to a
+            # conservative bump (one rule at this phase) if it carried none.
+            tip = _tip_from_error(cause)
+            self._next_seq = tip - 1 if tip is not None else self._next_seq + 2
             await self._audit(
                 phase="input_validation",
                 event_kind="unsupported",
@@ -163,7 +229,16 @@ class SendInvoiceWorkflow:
             decision="permit",
         )
 
-        # ---- 1. agent loop --------------------------------------------------
+        # ---- 1-3. agent loop + pre_action_proposal gate, with self-heal -----
+        # The agent drafts a proposal; the pre_action_proposal policy gate
+        # judges it. With self-heal enabled, a policy block feeds the
+        # violations back to the agent for a bounded number of retries instead
+        # of terminating — letting the agent correct hallucinated contracts or
+        # empty/degenerate proposals. self_heal_max_attempts=0 keeps the
+        # original single-shot behavior.
+        proposal: Any = None
+        proposal_ctx: dict[str, Any] = {}
+        payload = None
         async with stateful_mcp_server(
             "bank",
             config=ActivityConfig(
@@ -171,64 +246,165 @@ class SendInvoiceWorkflow:
                 retry_policy=RetryPolicy(maximum_attempts=1),
             ),
         ) as bank:
-            agent = build_main_agent(bank)
-            result = await Runner.run(agent, input=req.user_message, max_turns=10)
-
-        proposal = result.final_output
-        if proposal is None:
-            await self._audit(
-                phase="pre_action_proposal",
-                event_kind="agent_no_output",
-                payload={"user_message": req.user_message},
+            agent = build_main_agent(
+                bank,
+                prompt_variant=req.prompt_variant,
+                use_invoice_tool=req.use_invoice_tool,
             )
-            return WorkflowResult(
-                outcome="policy_rejected",
-                detail="Agent returned no structured proposal.",
-            )
+            agent_input = req.user_message
+            attempts_left = req.self_heal_max_attempts
+            while True:
+                # 20 turns: reasoning models (gpt-5.x) make one tool call per
+                # turn and use the compute tools per line, so 10 is too tight;
+                # non-reasoning models finish well under this.
+                result = await Runner.run(agent, input=agent_input, max_turns=20)
+                proposal = result.final_output
+                if proposal is None:
+                    await self._audit(
+                        phase="pre_action_proposal",
+                        event_kind="agent_no_output",
+                        payload={"user_message": req.user_message},
+                    )
+                    return WorkflowResult(
+                        outcome="policy_rejected",
+                        detail="Agent returned no structured proposal.",
+                    )
 
-        # ---- 2. build policy context (pure workflow code) -------------------
-        self._tool_calls = extract_tool_calls(result)
-        self._reasoning_text = extract_reasoning_text(result)
-        resolved_entities = project_resolved_entities(self._tool_calls)
-        self._proposal_hash = hash_proposal(proposal.model_dump())
+                # Clarification round-trip: the agent judged the request
+                # ambiguous and asked. Surface the question, then wait for a
+                # `clarify` signal with the answer and re-run the agent with it.
+                # If no answer arrives in time, return needs_clarification.
+                if getattr(proposal, "needs_clarification", False):
+                    question = proposal.clarification_question or "Clarification needed."
+                    await self._audit(
+                        phase="pre_action_proposal",
+                        event_kind="needs_clarification",
+                        payload={"question": question, "user_message": req.user_message},
+                    )
+                    # No bound by default → the human gets unlimited time to
+                    # answer. A bound is opt-in (eval); on expiry, terminal.
+                    if req.clarification_timeout_seconds is None:
+                        await workflow.wait_condition(lambda: self._clarification is not None)
+                    else:
+                        try:
+                            await workflow.wait_condition(
+                                lambda: self._clarification is not None,
+                                timeout=timedelta(seconds=req.clarification_timeout_seconds),
+                            )
+                        except TimeoutError:
+                            return WorkflowResult(outcome="needs_clarification", detail=question)
+                    answer = self._clarification
+                    assert answer is not None
+                    await self._audit(
+                        phase="pre_action_proposal",
+                        event_kind="clarification_answered",
+                        payload={"question": question, "answer": answer.answer},
+                        actor={"user_id": answer.responder_id, "auth_method": "demo_cli"},
+                    )
+                    # Re-run the agent with the answer; clear so a second ask
+                    # waits for a fresh response.
+                    agent_input = (
+                        f"{req.user_message}\n\nClarification — {question}\n"
+                        f"Answer: {answer.answer}\nNow draft exactly that invoice."
+                    )
+                    self._clarification = None
+                    continue
 
-        proposal_ctx = {
-            "proposal": proposal.model_dump(),
-            "resolved_entities": resolved_entities,
-            "tool_calls": self._tool_calls,
-            "reasoning_text": self._reasoning_text,
-            "workflow_run_id": run_id,
-        }
+                self._tool_calls = extract_tool_calls(result)
+                self._reasoning_text = extract_reasoning_text(result)
+                resolved_entities = project_resolved_entities(self._tool_calls)
 
-        # ---- 3. pre_action_proposal policy gate -----------------------------
-        try:
-            payload = await workflow.execute_activity(
-                evaluate_policy,
-                EvaluatePolicyInput(
-                    workflow_run_id=run_id,
-                    starting_sequence_no=self._next_seq + 1,
-                    phase=Phase.pre_action_proposal.value,
-                    context=proposal_ctx,
-                ),
-                start_to_close_timeout=timedelta(seconds=60),
-                retry_policy=_POLICY_DECISION_RETRY,
-            )
-        except ActivityError as e:
-            # Temporal wraps the activity's ApplicationError in ActivityError;
-            # unwrap to read the type the activity assigned.
-            cause = e.cause if isinstance(e.cause, ApplicationError) else None
-            err_type = cause.type if cause else None
-            # The activity may have reserved sequence numbers for rule events
-            # it wrote before raising; advance past them conservatively.
-            self._next_seq += 12  # at most 12 rules in the policy at stage 5
-            await self._audit(
-                phase="pre_action_proposal",
-                event_kind="policy_rejected",
-                payload={"error_type": err_type, "message": str(e)},
-                decision="block",
-            )
-            return WorkflowResult(outcome="policy_rejected", detail=str(e))
+                # Derive contract_id deterministically rather than trust the
+                # model: it follows from source_type + the resolved active
+                # contract. contract/time-tracking invoices bill under the
+                # active contract; rate_card/user_specified never carry one.
+                # (Removes the dominant "contract mis-attachment" failure — see
+                # docs/eval-results-send-invoice-v0.1.md.)
+                if proposal.source_type in ("contract", "time_tracking"):
+                    resolved_contract = resolved_entities.get("contract")
+                    # If the agent didn't resolve the contract, look it up and
+                    # inject it into resolved_entities — so BOTH the contract_id
+                    # derivation and the policy gates (contract_must_exist,
+                    # contract_consistency) see a fully-resolved contract, not a
+                    # dangling id. The contract a customer bills under is
+                    # determined by the customer, not the model.
+                    resolved_ok = isinstance(resolved_contract, dict) and resolved_contract.get(
+                        "id"
+                    )
+                    if not resolved_ok and proposal.customer_id:
+                        fetched = cast(
+                            "dict[str, Any] | None",
+                            await workflow.execute_activity(
+                                resolve_customer_contract,
+                                proposal.customer_id,
+                                start_to_close_timeout=timedelta(seconds=15),
+                            ),
+                        )
+                        if fetched is not None:
+                            resolved_entities["contract"] = fetched
+                            resolved_contract = fetched
+                    proposal.contract_id = (
+                        cast("str | None", resolved_contract.get("id"))
+                        if isinstance(resolved_contract, dict)
+                        else None
+                    )
+                else:
+                    proposal.contract_id = None
 
+                self._proposal_hash = hash_proposal(proposal.model_dump())
+                proposal_ctx = {
+                    "proposal": proposal.model_dump(),
+                    "resolved_entities": resolved_entities,
+                    "tool_calls": self._tool_calls,
+                    "reasoning_text": self._reasoning_text,
+                    "workflow_run_id": run_id,
+                }
+
+                try:
+                    payload = await workflow.execute_activity(
+                        evaluate_policy,
+                        EvaluatePolicyInput(
+                            workflow_run_id=run_id,
+                            starting_sequence_no=self._next_seq + 1,
+                            phase=Phase.pre_action_proposal.value,
+                            context=proposal_ctx,
+                        ),
+                        start_to_close_timeout=timedelta(seconds=60),
+                        retry_policy=_POLICY_ACTIVITY_RETRY,
+                    )
+                    break  # permitted
+                except ActivityError as e:
+                    # Temporal wraps the activity's ApplicationError; unwrap to
+                    # read the type the activity assigned.
+                    cause = e.cause if isinstance(e.cause, ApplicationError) else None
+                    err_type = cause.type if cause else None
+                    # Sync to the tip the activity reported (rule rows it wrote
+                    # before raising); fall back to a conservative bump past
+                    # the policy's ~12 rules if it carried none. Critical on
+                    # the self-heal path: the next attempt's writes must not
+                    # collide with this blocked attempt's rows.
+                    tip = _tip_from_error(cause)
+                    self._next_seq = tip - 1 if tip is not None else self._next_seq + 12
+                    if attempts_left > 0 and err_type == "PolicyDecisionError":
+                        attempts_left -= 1
+                        feedback = _heal_feedback(cause)
+                        await self._audit(
+                            phase="pre_action_proposal",
+                            event_kind="self_heal_retry",
+                            payload={"attempts_remaining": attempts_left, "message": str(e)},
+                            decision="block",
+                        )
+                        agent_input = req.user_message + feedback
+                        continue
+                    await self._audit(
+                        phase="pre_action_proposal",
+                        event_kind="policy_rejected",
+                        payload={"error_type": err_type, "message": str(e)},
+                        decision="block",
+                    )
+                    return WorkflowResult(outcome="policy_rejected", detail=str(e))
+
+        assert payload is not None
         self._policy_hash = payload.policy_hash
         self._next_seq = payload.next_sequence_no - 1  # advance to last used
 
@@ -284,13 +460,16 @@ class SendInvoiceWorkflow:
                     context=pre_exec_ctx,
                 ),
                 start_to_close_timeout=timedelta(seconds=60),
-                retry_policy=_POLICY_DECISION_RETRY,
+                retry_policy=_POLICY_ACTIVITY_RETRY,
             )
             self._next_seq = payload.next_sequence_no - 1
         except ActivityError as e:
             cause = e.cause if isinstance(e.cause, ApplicationError) else None
             err_type = cause.type if cause else None
-            self._next_seq += 4  # at most 2 pre_execute rules
+            # Sync to the tip the activity reached; fall back to a
+            # conservative bump (at most 2 pre_execute rules) if it carried none.
+            tip = _tip_from_error(cause)
+            self._next_seq = tip - 1 if tip is not None else self._next_seq + 4
             await self._audit(
                 phase="pre_execute",
                 event_kind="policy_rejected",
@@ -343,7 +522,7 @@ class SendInvoiceWorkflow:
         is_terminal_event: bool = False,
     ) -> None:
         seq = self._allocate_seq()
-        await workflow.execute_activity(
+        next_tip = await workflow.execute_activity(
             audit_log,
             AuditEvent(
                 workflow_run_id=workflow.info().workflow_id,
@@ -361,11 +540,8 @@ class SendInvoiceWorkflow:
             ),
             start_to_close_timeout=timedelta(seconds=15),
         )
-        # Audit_validation may have written extra rule_fired rows past
-        # our allocated seq. Advance our counter past them to avoid
-        # collisions on the next write.
-        if is_terminal_event:
-            # Conservative bump — at Stage 5 there are 2 audit_validation
-            # rules; even if both fire we won't collide. Production-grade
-            # counter sync would have the activity return the new tip.
-            self._next_seq += 4
+        # Sync to the tip the activity reached. A terminal event may have
+        # written audit_validation rule_fired rows past our allocated seq;
+        # the activity returns the real next-free number so the next write
+        # never collides. For a non-terminal event this is just seq + 1.
+        self._next_seq = next_tip - 1

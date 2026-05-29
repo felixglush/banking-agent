@@ -73,7 +73,7 @@ def extract_tool_calls(run_result: Any) -> list[ToolCallRecord]:
             call_id = _attr_or_key(raw, "call_id") or _attr_or_key(raw, "id")
             output_raw = _attr_or_key(raw, "output") or getattr(item, "output", None)
             if call_id and call_id in calls:
-                calls[call_id]["result"] = _maybe_json(output_raw)
+                calls[call_id]["result"] = _decode_tool_output(output_raw)
     return [calls[cid] for cid in order]
 
 
@@ -101,17 +101,34 @@ def project_resolved_entities(tool_calls: list[ToolCallRecord]) -> ResolvedEntit
     for call in tool_calls:
         name = call["tool_name"]
         result = call["result"]
-        if name == "list_customers" and isinstance(result, list) and result:
-            entities["customer"] = cast(list[dict[str, Any]], result)[0]
+        if name == "list_customers":
+            items = _bounded_items(result)
+            if items:
+                entities["customer"] = items[0]
         elif name == "get_customer" and isinstance(result, dict):
             entities["customer"] = cast(dict[str, Any], result)
         elif name == "get_active_contract" and isinstance(result, dict):
             entities["contract"] = cast(dict[str, Any], result)
-        elif name == "get_rate_card" and isinstance(result, dict):
-            entities["rate_card_entries"].append(cast(dict[str, Any], result))
-        elif name == "list_time_entries" and isinstance(result, list):
-            entities["time_entries"].extend(cast(list[dict[str, Any]], result))
+        elif name == "get_rate_card":
+            entities["rate_card_entries"].extend(_bounded_items(result))
+        elif name == "list_time_entries":
+            entities["time_entries"].extend(_bounded_items(result))
     return entities
+
+
+def _bounded_items(result: Any) -> list[dict[str, Any]]:
+    """Extract the items list from an mcp_bank ``BoundedList[T]`` payload.
+
+    The wire shape after ``_decode_tool_output`` is ``{"items": [...],
+    "truncated": bool}``; raw lists are accepted for legacy test fixtures.
+    """
+    if isinstance(result, list):
+        return cast(list[dict[str, Any]], result)
+    if isinstance(result, dict):
+        items = cast(dict[str, Any], result).get("items")
+        if isinstance(items, list):
+            return cast(list[dict[str, Any]], items)
+    return []
 
 
 def extract_reasoning_text(run_result: Any) -> str:
@@ -148,3 +165,33 @@ def _maybe_json(value: Any) -> Any:
         return json.loads(value)
     except (ValueError, TypeError):
         return value
+
+
+def _decode_tool_output(value: Any) -> Any:
+    """Decode an SDK tool-output payload to its underlying Pydantic-dump shape.
+
+    Two transport wrappers are unwrapped:
+    * a bare JSON string — emitted when the SDK hands us the model's raw
+      serialization;
+    * a single-segment content envelope of the form
+      ``[{"type": "input_text" | "text", "text": "<json>"}]`` — emitted when
+      MCP routes a Pydantic response through the Agents SDK's content
+      protocol.
+
+    Multi-segment envelopes and unknown shapes pass through unchanged; the
+    projection then either matches them with an ``isinstance`` guard or
+    ignores them.
+    """
+    decoded: Any = _maybe_json(value)
+    if not isinstance(decoded, list):
+        return decoded
+    decoded_list = cast(list[Any], decoded)
+    if len(decoded_list) != 1 or not isinstance(decoded_list[0], dict):
+        return decoded_list
+    first = cast(dict[str, Any], decoded_list[0])
+    if first.get("type") not in ("input_text", "text"):
+        return decoded_list
+    text = first.get("text")
+    if not isinstance(text, str):
+        return decoded_list
+    return _maybe_json(text)

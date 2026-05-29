@@ -940,6 +940,7 @@ def _generate_ground_truth(
     rng: random.Random,
     customers: list[dict[str, Any]],
     invoices: list[dict[str, Any]],
+    line_items: list[dict[str, Any]],
     contracts: list[dict[str, Any]],
     rate_cards: list[dict[str, Any]],
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
@@ -958,11 +959,40 @@ def _generate_ground_truth(
     for inv in invoices:
         invoices_by_customer.setdefault(cast(str, inv["customer_id"]), []).append(inv)
 
-    contracts_by_customer = {c["customer_id"]: c for c in contracts}
-
     # --- Invoice resolution labels ---------------------------------
-    # Pick 120 cases, one per (customer, source_type) combination where
-    # an invoice exists. Deterministic by sorting then capping.
+    # Each seed invoice bills a SPECIFIC basis (a rate-card service, a
+    # role+month of time, a SOW milestone, a retainer month), captured in its
+    # first line item's description. We emit two kinds of cases:
+    #
+    # * SENT — a request that NAMES that basis, so exactly one seed invoice
+    #   (one total) is the correct answer. Emitted only when (customer,
+    #   description) is unique, so the answer is unambiguous.
+    # * NEEDS_CLARIFICATION — a deliberately generic request ("a time-tracking
+    #   invoice") for a customer that has >1 invoice of that source_type, so
+    #   several totals would be valid. The right behavior is to ASK which one.
+    #
+    # Both require a verified customer (else customer_kyc_verified blocks and
+    # the true outcome is policy_rejected — the policy_rejected corpus uses
+    # non-verified customers on purpose).
+    cust_by_id = {cast(str, c["id"]): c for c in customers}
+    desc_by_invoice: dict[str, str] = {}
+    for li in sorted(line_items, key=lambda x: (cast(str, x["invoice_id"]), int(x["line_no"]))):
+        desc_by_invoice.setdefault(cast(str, li["invoice_id"]), cast(str, li["description"]))
+
+    # (customer, description) must be unique for a 'sent' case to be the only
+    # real answer.
+    desc_key_count: dict[tuple[str, str], int] = {}
+    for inv in invoices:
+        k = (cast(str, inv["customer_id"]), desc_by_invoice.get(cast(str, inv["id"]), ""))
+        desc_key_count[k] = desc_key_count.get(k, 0) + 1
+
+    source_phrase = {
+        "contract": "contract",
+        "rate_card": "rate-card",
+        "time_tracking": "time-tracking",
+        "user_specified": "ad-hoc",
+    }
+
     invoice_pool = sorted(
         invoices,
         key=lambda i: (
@@ -972,28 +1002,155 @@ def _generate_ground_truth(
         ),
     )
     invoice_cases: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
+
+    # SENT: specific, uniquely-answerable requests for verified customers.
     for inv in invoice_pool:
-        key = (cast(str, inv["customer_id"]), cast(str, inv["source_type"]))
-        if key in seen:
+        customer = cust_by_id[cast(str, inv["customer_id"])]
+        if customer["kyc_status"] != "verified":
             continue
-        seen.add(key)
-        customer = next(c for c in customers if c["id"] == inv["customer_id"])
-        contract_id = inv.get("contract_id")
-        case = {
-            "case_id": f"ir_{len(invoice_cases) + 1:04d}",
-            "request": (f"Send invoice for {customer['name']} — source: {inv['source_type']}"),
-            "expected": {
-                "customer_id": inv["customer_id"],
-                "source_type": inv["source_type"],
-                "total_cents": inv["total_cents"],
-                "contract_id": contract_id,
-                "currency": inv["currency"],
-            },
-        }
-        invoice_cases.append(case)
+        desc = desc_by_invoice.get(cast(str, inv["id"]))
+        if not desc:
+            continue
+        if desc_key_count[(cast(str, inv["customer_id"]), desc)] != 1:
+            continue  # not uniquely addressable → would be ambiguous
+        # user_specified means the user states the amount — so the request
+        # carries it (otherwise an ad-hoc amount isn't derivable from any
+        # rate/contract/time data and the case is ill-posed). Other source
+        # types derive the amount from the named basis.
+        if inv["source_type"] == "user_specified":
+            amount = cast(int, inv["total_cents"])
+            request = (
+                f"Send {customer['name']} the agreed ${amount / 100:,.2f} invoice for: {desc}."
+            )
+        else:
+            request = f"Send {customer['name']} the invoice for: {desc}."
+        invoice_cases.append(
+            {
+                "case_id": f"ir_{len(invoice_cases) + 1:04d}",
+                "request": request,
+                "expected_outcome": "sent",
+                "expected_decline_reason": None,
+                "expected": {
+                    "customer_id": inv["customer_id"],
+                    "source_type": inv["source_type"],
+                    "total_cents": inv["total_cents"],
+                    "contract_id": inv.get("contract_id"),
+                    "currency": inv["currency"],
+                },
+            }
+        )
         if len(invoice_cases) >= 120:
             break
+
+    # CLARIFICATION ROUND-TRIP (expected_outcome="sent"): a deliberately
+    # generic request where the customer has >1 invoice of the named
+    # source_type, so the agent must ASK which one. ``clarify_answer`` is the
+    # disambiguating detail the harness signals back; the agent then drafts the
+    # one specific invoice in ``expected``. The answer pins a unique invoice
+    # (its description is unique for the customer), so the result is determinate.
+    src_count: dict[tuple[str, str], int] = {}
+    for inv in invoices:
+        sk = (cast(str, inv["customer_id"]), cast(str, inv["source_type"]))
+        src_count[sk] = src_count.get(sk, 0) + 1
+    clarify_seen: set[tuple[str, str]] = set()
+    n_clarify = 0
+    for inv in invoice_pool:
+        cust = cast(str, inv["customer_id"])
+        src = cast(str, inv["source_type"])
+        if (cust, src) in clarify_seen or src_count[(cust, src)] < 2:
+            continue
+        customer = cust_by_id[cust]
+        if customer["kyc_status"] != "verified":
+            continue
+        desc = desc_by_invoice.get(cast(str, inv["id"]))
+        if not desc or desc_key_count[(cust, desc)] != 1:
+            continue  # the answer must resolve to exactly one invoice
+        clarify_seen.add((cust, src))
+        invoice_cases.append(
+            {
+                "case_id": f"ir_cl_{n_clarify + 1:04d}",
+                "request": f"Send {customer['name']} a {source_phrase.get(src, src)} invoice.",
+                "clarify_answer": desc,
+                "expected_outcome": "sent",
+                "expected_decline_reason": None,
+                "expected": {
+                    "customer_id": inv["customer_id"],
+                    "source_type": inv["source_type"],
+                    "total_cents": inv["total_cents"],
+                    "contract_id": inv.get("contract_id"),
+                    "currency": inv["currency"],
+                },
+            }
+        )
+        n_clarify += 1
+        if n_clarify >= 16:
+            break
+
+    # --- Decline cases (Stage 7) ---------------------------------------
+    # Clone every 5th sent case as a decline. Deterministic; non-overlapping
+    # with the four-amount-source headline slice because we pick from after
+    # case 30 (the headline slice is the first 30 by source-type ordering).
+    decline_reasons = (
+        "amount_too_high_for_approver",
+        "customer_on_hold",
+        "requested_clarification",
+    )
+    # Clone only pure 'sent' cases (specific request, no clarification step).
+    sent_cases = [
+        c for c in invoice_cases if c["expected_outcome"] == "sent" and not c.get("clarify_answer")
+    ]
+    decline_seeds = [c for i, c in enumerate(sent_cases) if i >= 30 and i % 5 == 0]
+    decline_seeds = decline_seeds[:24]  # 14 train + 10 holdout
+    for j, seed in enumerate(decline_seeds):
+        invoice_cases.append(
+            {
+                "case_id": f"ir_d_{j + 1:04d}",
+                "request": seed["request"],
+                "expected_outcome": "declined",
+                "expected_decline_reason": decline_reasons[j % len(decline_reasons)],
+                # kept for forward-compat; ignored at score time
+                "expected": dict(cast(dict[str, Any], seed["expected"])),
+            }
+        )
+
+    # --- Policy-rejected cases (Stage 7) -------------------------------
+    # One sub-case per Billing-integrity primitive so policy_compliance
+    # mechanically validates each rule rejects.
+    # NOTE: rule_ids here must match the ``id`` field on the corresponding
+    # Rule object in ``policies/send_invoice.py`` (the policy registry).
+    # The bare primitive factories are ``*_check``-suffixed, but the
+    # registered rules drop the suffix — the corpus references the
+    # registered ids because that's what audit_log records.
+    #
+    # v0.1 picks rules + customers that deterministically trip in the
+    # current Stage 5 policy + Stage 4 agent integration:
+    # * customer_kyc_verified — fires on any send to a restricted customer
+    #   (Acme Corp = cust_0001 is seeded restricted by adversarial.yaml).
+    # The three Billing-integrity primitives that depend on the LLM
+    # producing a specific violation shape (require_amount_source,
+    # contract_consistency, currency_consistency, prohibit_exceed_contract_cap)
+    # need either tighter agent prompts or richer per-line policy
+    # context — tracked as Stage 5/8 follow-up.
+    policy_reject_specs = [
+        (
+            "customer_kyc_verified",
+            "Send invoice for Acme Corp for $5,000 — the usual rate-card service.",
+        ),
+    ]
+    # 10 train + 6 holdout = 16 total. Cycle through the 4 specs 4× = 16 cases.
+    for k in range(16):
+        rule_id, request = policy_reject_specs[k % len(policy_reject_specs)]
+        invoice_cases.append(
+            {
+                "case_id": f"ir_pr_{k + 1:04d}",
+                "request": request,
+                "expected_outcome": "policy_rejected",
+                "expected_decline_reason": None,
+                # consumed by the policy_compliance block below
+                "expected_fired_rule": rule_id,
+                "expected": {},  # ignored
+            }
+        )
 
     # --- Scope-gate labels -----------------------------------------
     in_scope = [
@@ -1025,28 +1182,24 @@ def _generate_ground_truth(
     scope_cases = in_scope + out_of_scope
 
     # --- Policy compliance labels ----------------------------------
-    # For each invoice resolution case, declare the rule IDs that
-    # should fire. Stage 5 will create these rules; we pre-name them
-    # so the corpus is ready.
+    # ``expected_fired_rules`` lists rules whose predicate is expected
+    # to return a Violation (the engine emits event_kind='rule_fired').
+    # A rule whose predicate returns None emits 'rule_skipped' and is
+    # NOT in this set. Sent / declined cases pass cleanly so the set is
+    # empty; policy_rejected cases name the specific Billing-integrity
+    # primitive expected to trip.
     policy_cases: list[dict[str, Any]] = []
     for case in invoice_cases:
-        expected_rules: list[str] = [
-            "intent_must_be_send_invoice",
-            "require_amount_source",
-            "currency_consistency_check",
-        ]
-        src = cast(str, cast(dict[str, Any], case["expected"])["source_type"])
-        if src == "contract":
-            expected_rules.append("contract_consistency_check")
-            customer_id = cast(str, cast(dict[str, Any], case["expected"])["customer_id"])
-            contract = contracts_by_customer.get(customer_id)
-            if contract is not None and contract["billing_structure"]["kind"] == "t_and_m":
-                expected_rules.append("prohibit_exceed_contract_cap")
+        outcome = case.get("expected_outcome")
+        if outcome == "policy_rejected":
+            expected_rules = [cast(str, case["expected_fired_rule"])]
+        else:
+            expected_rules = []
         policy_cases.append(
             {
                 "case_id": f"pc_{case['case_id']}",
                 "invoice_case_id": case["case_id"],
-                "expected_fired_rules": sorted(expected_rules),
+                "expected_fired_rules": expected_rules,
             }
         )
 
@@ -1119,8 +1272,52 @@ def _generate_ground_truth(
 # ---------------------------------------------------------------------
 
 
-def simulate(seed: int | None = None) -> None:
-    """Generate all JSONL artifacts under ``synthetic_account_1/generated/``."""
+def _upload_dataset_to_langfuse(dataset_name: str) -> None:
+    """Upload the just-generated corpus to Langfuse as a Dataset named
+    ``dataset_name`` (train + holdout items, split tagged in metadata).
+
+    No-op with a printed notice when Langfuse env vars are absent, so pure
+    generation never requires Langfuse. Lazy imports keep simulate.py
+    importable without langfuse / compass.eval installed."""
+    import asyncio  # noqa: PLC0415
+    import os  # noqa: PLC0415
+
+    if not os.environ.get("LANGFUSE_PUBLIC_KEY"):
+        print(f"dataset upload skipped (LANGFUSE_PUBLIC_KEY not set); name={dataset_name!r}")
+        return
+
+    from langfuse import get_client  # noqa: PLC0415
+
+    from compass.eval.corpus import load_corpus  # noqa: PLC0415
+    from compass.eval.sources.langfuse_scores import LangfuseDatasetScoreSink  # noqa: PLC0415
+    from compass.eval.types import Mode  # noqa: PLC0415
+
+    client = get_client()
+    sink = LangfuseDatasetScoreSink(client=client, dataset_name=dataset_name)
+
+    async def _upload() -> int:
+        n = 0
+        for mode in (Mode.train, Mode.holdout):
+            cases = load_corpus(
+                workflow="send_invoice",
+                mode=mode,
+                ground_truth_root=GROUND_TRUTH_DIR,
+            )
+            await sink.ensure_dataset(cases, split=mode.value)
+            n += len(cases)
+        return n
+
+    total = asyncio.run(_upload())
+    client.flush()
+    print(f"uploaded dataset {dataset_name!r} to Langfuse ({total} items, train+holdout)")
+
+
+def simulate(seed: int | None = None, dataset_name: str | None = None) -> None:
+    """Generate all JSONL artifacts under ``synthetic_account_1/generated/``.
+
+    When ``dataset_name`` is given, the generated corpus is also written to a
+    manifest and uploaded to Langfuse as a Dataset under that name, so eval
+    runs associate with the label the operator chose at generation time."""
     cfg = _load_config()
     effective_seed = seed if seed is not None else int(cast(int, cfg.company["default_seed"]))
     rng = random.Random(effective_seed)
@@ -1149,7 +1346,9 @@ def simulate(seed: int | None = None) -> None:
     )
     transactions = _generate_transactions(rng, cfg, invoices)
     disputes = _generate_disputes(invoices, transactions)
-    ground_truth = _generate_ground_truth(rng, customers, invoices, contracts, rate_cards)
+    ground_truth = _generate_ground_truth(
+        rng, customers, invoices, line_items, contracts, rate_cards
+    )
 
     # --- bank/ ---------------------------------------------------
     _write_json(BANK_DIR / "accounts.json", accounts)
@@ -1180,6 +1379,16 @@ def simulate(seed: int | None = None) -> None:
         f"disputes={len(disputes)}"
     )
 
+    # --- dataset label + Langfuse upload --------------------------
+    if dataset_name is not None:
+        # Manifest links this corpus to the Langfuse dataset name; the eval
+        # CLI reads it so every run associates with the labelled dataset.
+        _write_json(
+            GROUND_TRUTH_DIR / "dataset_manifest.json",
+            {"dataset_name": dataset_name, "seed": effective_seed},
+        )
+        _upload_dataset_to_langfuse(dataset_name)
+
 
 def _main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="synthetic_account_1.simulate")
@@ -1189,8 +1398,18 @@ def _main(argv: list[str] | None = None) -> int:
         default=None,
         help="Override the seed defined in config/company.yaml.",
     )
+    parser.add_argument(
+        "--dataset-name",
+        default=None,
+        help=(
+            "Label for this corpus. When set, writes ground_truth/"
+            "dataset_manifest.json and uploads the corpus to Langfuse as a "
+            "Dataset with this name (requires LANGFUSE_* env). The eval CLI "
+            "reads the manifest so runs associate with this dataset."
+        ),
+    )
     args = parser.parse_args(argv)
-    simulate(seed=args.seed)
+    simulate(seed=args.seed, dataset_name=args.dataset_name)
     return 0
 
 
