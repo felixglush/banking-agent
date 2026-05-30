@@ -12,6 +12,7 @@ orchestration code is independent of model behaviour; live-model smoke
 is documented separately in ``workflows/send_invoice/README.md``.
 """
 
+import json
 import os
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -28,7 +29,11 @@ from temporalio.contrib.openai_agents import (
     ModelActivityParameters,
     StatefulMCPServerProvider,
 )
-from temporalio.contrib.openai_agents.testing import AgentEnvironment, TestModel
+from temporalio.contrib.openai_agents.testing import (
+    AgentEnvironment,
+    ResponseBuilders,
+    TestModel,
+)
 from temporalio.testing import WorkflowEnvironment
 from temporalio.worker import Worker
 
@@ -165,3 +170,27 @@ def proposal_dict(**overrides: Any) -> dict[str, Any]:
     }
     base.update(overrides)
     return base
+
+
+_DEFAULT_CLASSIFICATION: dict[str, Any] = {
+    "intent": "send_invoice",
+    "confidence": 0.95,
+    "rationale": "User asked to send an invoice.",
+}
+
+
+def proposal_test_model(
+    proposal: dict[str, Any] | None = None,
+    classification: dict[str, Any] | None = None,
+) -> TestModel:
+    """Two-shot fake model: scope-gate classification, then InvoiceProposal.
+
+    The scope-gate sub-agent consumes the first response; the main agent
+    parses the second against ``InvoiceProposal``. Order matters — the SDK
+    matches each response to the calling agent's ``output_type``. Shared by
+    the gate-snapshot and adversarial-probe tests so both drive the gate
+    from one proposal source (``test_workflow.py`` keeps its own copy)."""
+    payload = proposal if proposal is not None else proposal_dict()
+    cls = classification if classification is not None else _DEFAULT_CLASSIFICATION
+    responses = iter([json.dumps(cls), json.dumps(payload)])
+    return TestModel(lambda: ResponseBuilders.output_message(next(responses)))

@@ -1,18 +1,34 @@
 """Unit and integration tests for TemporalWorkflowRunner.run_probe."""
 
-import os
 from unittest.mock import AsyncMock, MagicMock
 
 import psycopg
 import pytest
 from temporalio.client import Client
+from temporalio.contrib.openai_agents.testing import TestModel
 from temporalio.worker import Worker
 
 from compass.eval.runner import TemporalWorkflowRunner
-from tests.workflows.send_invoice.conftest import TASK_QUEUE
+from tests.workflows.send_invoice.conftest import TASK_QUEUE, proposal_test_model
 from workflows.send_invoice.types import GateSnapshot
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture(autouse=True)
+def _disable_policy_for_probe(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The in-process TestModel never calls MCP, so resolved_entities is empty
+    and the policy gate would reject. Disable it so the benign probe reaches a
+    permitted verdict (policy firing is covered by test_workflow_policy.py).
+    Harmless to the mocked unit tests below, which never read the env var."""
+    monkeypatch.setenv("COMPASS_POLICY_DISABLE", "1")
+
+
+@pytest.fixture
+def model() -> TestModel:
+    return proposal_test_model()
 
 
 # ---------------------------------------------------------------------------
@@ -29,8 +45,10 @@ async def _invoice_count(dsn: str) -> int:
     return int(row[0])
 
 
-async def test_run_probe_permits_without_executing(temporal_client: Client, worker: Worker) -> None:
-    dsn = os.environ["COMPASS_PG_DSN"]
+async def test_run_probe_permits_without_executing(
+    temporal_client: Client, worker: Worker, invoice_runtime_db: str
+) -> None:
+    dsn = invoice_runtime_db
     runner = TemporalWorkflowRunner(client=temporal_client, task_queue=TASK_QUEUE)
     probe = await runner.run_probe("invoice Acme for last quarter", probe_id="atk_0001")
     assert probe.gate_decision == "permitted"

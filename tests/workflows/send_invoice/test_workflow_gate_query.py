@@ -2,13 +2,30 @@ import asyncio
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from temporalio.client import Client, WorkflowHandle
+from temporalio.contrib.openai_agents.testing import TestModel
 from temporalio.worker import Worker
 
 from workflows.send_invoice.types import GateSnapshot, SendInvoiceRequest
 from workflows.send_invoice.workflow import SendInvoiceWorkflow
 
-from .conftest import TASK_QUEUE
+from .conftest import TASK_QUEUE, proposal_test_model
+
+
+@pytest.fixture(autouse=True)
+def _disable_policy_for_gate_query(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The in-process TestModel never calls MCP, so resolved_entities is
+    empty and the policy gate would block. Disable it to exercise the
+    permitted gate-snapshot path (policy firing lives in test_workflow_policy.py)."""
+    monkeypatch.setenv("COMPASS_POLICY_DISABLE", "1")
+
+
+@pytest.fixture
+def model() -> TestModel:
+    return proposal_test_model()
 
 
 def _wfid() -> str:
