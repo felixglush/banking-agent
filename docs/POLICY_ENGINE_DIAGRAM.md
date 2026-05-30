@@ -84,26 +84,25 @@ This file is diagrams + plain-English explanations of the moving parts.
        (stores policy_hash + advances seq counter)
 ```
 
-The same activity is invoked **twice** during one workflow run:
+The `evaluate_policy` activity is invoked **three times** during one
+workflow run — once per workflow-level phase:
 
 ```
-pre_action_proposal call           pre_execute call
-       │                                  │
-       │                                  │
-       ▼                                  ▼
-  permit = True  ─▶ await approval ─▶ permit = True  ─▶ execute_send
-       │                                  │
-       └─block / escalate                 └─block / escalate
-            │                                  │
-            ▼                                  ▼
-       audit reject                       audit reject
-            │                                  │
-            └────────────▶ END  ◀──────────────┘
+   evaluate_policy #1            evaluate_policy #2            evaluate_policy #3
+   phase=input_validation        phase=pre_action_proposal     phase=pre_execute
+   (after scope gate)            (after main agent)            (after approval)
+        │                             │                             │
+   permit ▶ run main agent       permit ▶ await approval        permit ▶ execute_send
+        │                             │                             │
+   block  ▶ audit unsupported    block ▶ audit reject           block ▶ audit reject
+        │                             │                             │
+        ▼                             ▼                             ▼
+       END                           END                           END
 ```
 
-`audit_validation` fires a third time inside the **audit_log** activity
-for the terminal row (executed / declined / timeout / policy_rejected) —
-same `evaluate(...)` core, different phase.
+`audit_validation` fires a fourth time inside the **audit_log** activity
+for the terminal row (executed / declined / timeout / unsupported /
+policy_rejected) — same `evaluate(...)` core, different phase.
 
 ---
 
@@ -111,10 +110,10 @@ same `evaluate(...)` core, different phase.
 
 | Phase | Fires at | Mechanism | Context contains | v0.1 rule count |
 |---|---|---|---|---|
-| `input_validation` | Before `Runner.run` enters its loop | OpenAI Agents SDK `@input_guardrail` (via `attach_to_agent`) | `user_message` (+ scope-gate output on second firing) | 0 — Stage 6 populates |
-| `output_validation` | On the agent's structured Pydantic output | OpenAI Agents SDK `@output_guardrail` (via `attach_to_agent`) | `proposal` | 0 — Pydantic already validates structure |
-| `pre_action_proposal` | After `Runner.run` returns, before human approval wait | Explicit Temporal `evaluate_policy` activity (first call) | `proposal`, `resolved_entities`, `tool_calls`, `reasoning_text`, `workflow_run_id` | **8** — bulk of policy load |
-| `pre_execute` | After approval signal, before `execute_send` | Explicit Temporal `evaluate_policy` activity (second call) | …pre_action_proposal context… plus `approval`, `proposal_hash_at_proposal`, `policy_hash_at_proposal` | **2** — drift detection |
+| `input_validation` | After the scope-gate `Runner.run`, before the main agent | Explicit Temporal `evaluate_policy` activity (first call) | `user_message`, `classification` (scope-gate output), `workflow_run_id` | **1** — `intent_must_be_send_invoice` |
+| `output_validation` | On the agent's structured Pydantic output | OpenAI Agents SDK `@output_guardrail` hook (`attach_to_agent`) — defined but **not wired** into the workflow today | `proposal` | 0 — Pydantic already validates structure |
+| `pre_action_proposal` | After the main `Runner.run` returns, before human approval wait | Explicit Temporal `evaluate_policy` activity (second call) | `proposal`, `resolved_entities`, `tool_calls`, `reasoning_text`, `workflow_run_id` | **9** — bulk of policy load |
+| `pre_execute` | After approval signal, before `execute_send` | Explicit Temporal `evaluate_policy` activity (third call) | …pre_action_proposal context… plus `approval`, `proposal_hash_at_proposal`, `policy_hash_at_proposal` | **2** — drift detection |
 | `audit_validation` | Inside `audit_log` activity, before terminal-row INSERT | Inline `evaluate_audit_validation()` in the audit_log activity body | `audit_entry_candidate`, `policy_hash`, `tool_calls`, `reasoning_text` | **2** — completeness check |
 
 Visualized along the workflow's timeline:
@@ -299,6 +298,7 @@ A **Rule** binds a configured predicate to an identity:
    │    entity_status_equals                                            │
    │    require_existing_entity                                         │
    │    require_evidence_citation                                       │
+   │    intent_in_allowlist                                             │
    │    prohibit_silent_modification_after_confirmation                 │
    │    prohibit_policy_drift_after_confirmation                        │
    │    log_policy_version                                              │
@@ -313,6 +313,7 @@ A **Rule** binds a configured predicate to an identity:
    │                                                                    │
    │    workflows/send_invoice/primitives.py:                           │
    │      require_amount_source                                         │
+   │      require_contract_exists                                       │
    │      contract_consistency_check                                    │
    │      prohibit_exceed_contract_cap                                  │
    │      currency_consistency_check                                    │
