@@ -26,11 +26,14 @@ Build-plan §Stage 4, §Stage 5, §Stage 6 are the contracts.
 
 ## Workflow diagram
 
-Solid arrows are the main control flow inside `SendInvoiceWorkflow.run`.
-Dashed arrows show how the external `approve` signal feeds the
-`wait_condition`. Orange = audit-log write; purple = Temporal activity
-(or auto-activity inside `Runner.run`); green = policy phase gate;
-blue = terminal `WorkflowResult.outcome`.
+Solid arrows are the main control flow inside `SendInvoiceWorkflow.run` —
+including the clarification round-trip (agent asks → `clarify` signal →
+re-run) and the self-heal loop (a `pre_action_proposal` block feeds the
+violations back to the agent for a bounded retry). Dashed arrows show how
+the external `approve` and `clarify` signals feed their `wait_condition`s.
+Orange = audit-log write; purple = Temporal activity (or auto-activity
+inside `Runner.run`); green = policy phase gate; blue = terminal
+`WorkflowResult.outcome`.
 
 ```mermaid
 flowchart TD
@@ -42,12 +45,21 @@ flowchart TD
     InputGate -- block --> AuditUnsupported[audit: unsupported<br/>+ classifier payload]
     AuditUnsupported --> EndUnsupported2([unsupported])
     InputGate -- permit --> AuditIntent[audit: intent_classified]
-    AuditIntent --> Agent[Main agent loop<br/>stateful MCP: bank<br/>Runner.run, max_turns=10]
+    AuditIntent --> Agent[Main agent loop<br/>stateful MCP: bank<br/>Runner.run, max_turns=20]
     Agent --> HasOutput{proposal?}
     HasOutput -- no --> AuditNoOut[audit: agent_no_output<br/>phase=pre_action_proposal]
     AuditNoOut --> EndRejected1([policy_rejected])
-    HasOutput -- yes --> ProposalGate{{evaluate_policy<br/>phase=pre_action_proposal}}
-    ProposalGate -- block --> AuditPolReject[audit: policy_rejected<br/>rule_ids_fired]
+    HasOutput -- yes --> NeedsClar{needs_clarification?}
+    NeedsClar -- yes --> AuditClarAsk[audit: needs_clarification]
+    AuditClarAsk --> WaitClar[wait_condition<br/>_clarification is not None<br/>optional clarification_timeout_seconds]
+    WaitClar -- timeout --> EndNeedsClar([needs_clarification])
+    WaitClar -- clarify signal --> AuditClarAns[audit: clarification_answered]
+    AuditClarAns --> Agent
+    NeedsClar -- no --> ProposalGate{{evaluate_policy<br/>phase=pre_action_proposal}}
+    ProposalGate -- block --> SelfHeal{self-heal attempt left?<br/>and PolicyDecisionError}
+    SelfHeal -- yes --> AuditHeal[audit: self_heal_retry<br/>feedback to agent]
+    AuditHeal --> Agent
+    SelfHeal -- no --> AuditPolReject[audit: policy_rejected<br/>rule_ids_fired]
     AuditPolReject --> EndRejected2([policy_rejected])
     ProposalGate -- permit/escalate --> Wait[wait_condition<br/>_approval is not None<br/>timeout=approval_timeout_seconds]
     Wait -- timeout --> AuditTimeout[audit: declined<br/>reason=approval_timeout]
@@ -66,14 +78,16 @@ flowchart TD
     Signal[/approve signal/]:::signal -. first wins .-> SetApproval[_approval = decision]
     Signal -. duplicate .-> AuditDup[audit: duplicate_approval_signal]
     SetApproval -. unblocks .-> Wait
+    ClarifySignal[/clarify signal/]:::signal -. first wins .-> SetClar[_clarification = response]
+    SetClar -. unblocks .-> WaitClar
 
     classDef audit fill:#fff4e6,stroke:#d9822b,color:#000
     classDef terminal fill:#e6f3ff,stroke:#1f6feb,color:#000
     classDef activity fill:#f0e6ff,stroke:#6f42c1,color:#000
     classDef policy fill:#e8f7e8,stroke:#2da44e,color:#000
     classDef signal fill:#e8f7e8,stroke:#2da44e,color:#000
-    class AuditNoClass,AuditUnsupported,AuditIntent,AuditNoOut,AuditPolReject,AuditTimeout,AuditSignal,AuditDeclined,AuditDriftReject,AuditExecuted,AuditDup audit
-    class EndUnsupported1,EndUnsupported2,EndRejected1,EndRejected2,EndRejected3,EndTimeout,EndDeclined,EndSent terminal
+    class AuditNoClass,AuditUnsupported,AuditIntent,AuditNoOut,AuditClarAsk,AuditClarAns,AuditHeal,AuditPolReject,AuditTimeout,AuditSignal,AuditDeclined,AuditDriftReject,AuditExecuted,AuditDup audit
+    class EndUnsupported1,EndUnsupported2,EndRejected1,EndRejected2,EndRejected3,EndNeedsClar,EndTimeout,EndDeclined,EndSent terminal
     class ScopeGate,Agent,Execute activity
     class InputGate,ProposalGate,PreExecGate policy
 ```
@@ -83,7 +97,7 @@ flowchart TD
 | Phase | Where it fires | What it checks |
 | --- | --- | --- |
 | `input_validation` | After scope-gate `Runner.run`, before main agent | Classifier output (`intent_must_be_send_invoice`). |
-| `pre_action_proposal` | After main agent `Runner.run`, before approval wait | Resolution, KYC, billing integrity, evidence citation, amount cap (8 rules). |
+| `pre_action_proposal` | After main agent `Runner.run`, before approval wait | Resolution, KYC, billing integrity, evidence citation, amount cap (9 rules). |
 | `pre_execute` | After approval signal, before `execute_send` | Proposal-hash drift, policy-hash drift between proposal and execute (2 rules). |
 | `audit_validation` | Inside `audit_log` on the terminal `executed` row only | Audit-completeness defect detectors (2 rules). |
 
@@ -153,7 +167,7 @@ line item into `invoice_line_items`, and an `audit_log` chain whose
 exact shape depends on which rules fire. On a clean send-invoice run
 with permitted policy at every phase, the rows are:
 `intent_classified` (scope-gate permitted) →
-eight `rule_skipped` rows at `pre_action_proposal` →
+nine `rule_skipped` rows at `pre_action_proposal` →
 `approval_signal` →
 two `rule_skipped` rows at `pre_execute` →
 `executed` (plus two `rule_skipped` rows at `audit_validation`).
