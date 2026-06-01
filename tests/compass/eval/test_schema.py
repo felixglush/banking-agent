@@ -82,6 +82,6 @@ async def test_suite_names_check_rejects_unknown_suite(db_dsn: str) -> None:
                     """
                     INSERT INTO eval_runs (run_id, git_sha, mode, suite_names)
                     VALUES ('ev_test_bad_suite', 'TEST_SHA_3', 'train',
-                            ARRAY['functional','adversarial']::text[])
+                            ARRAY['functional','not_a_real_suite']::text[])
                     """,
                 )
