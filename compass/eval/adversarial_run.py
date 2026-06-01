@@ -105,17 +105,23 @@ def _case_id(category: str, prompt: str) -> str:
 
 def map_attacks(generated: Mapping[str, Any], contexts: AttackContexts) -> list[Attack]:
     """Generated red-team corpus (raw ``promptfoo redteam generate`` output) →
-    attack list. ``category`` is recovered by locating a category's policy text
-    anywhere in the test (a grouping label only; unmatched → ``unknown``). A test
+    attack list. ``category`` is recovered (a grouping label only; unmatched →
+    ``unknown``) by either the source policy text (``policy`` plugins) or the
+    test's ``pluginId`` (specialized plugins, which carry no policy text). A test
     without its own grader gets ``DEFAULT_RUBRIC`` so it stays gradable."""
-    # (category tag, normalized policy text)
+    # (category tag, normalized policy text) for policy plugins, and
+    # {non-policy pluginId -> category tag} for specialized plugins (first wins).
     cat_policies: list[tuple[str, str]] = []
+    cat_by_plugin_id: dict[str, str] = {}
     for c in contexts.categories:
         for p in c.plugins:
+            pid = str(p.get("id") or "")
             cfg = cast(Mapping[str, Any], p.get("config") or {})
             policy = cfg.get("policy")
             if policy:
                 cat_policies.append((c.tag, _normalize(str(policy))))
+            elif pid:
+                cat_by_plugin_id.setdefault(pid, c.tag)
 
     # The run's purpose: the native promptfoo:redteam:* graders require it in the
     # test metadata. promptfoo writes it under redteam.purpose in the generated file.
@@ -134,6 +140,10 @@ def map_attacks(generated: Mapping[str, Any], contexts: AttackContexts) -> list[
             if policy_norm and policy_norm in blob:
                 category = tag
                 break
+        else:
+            # No policy-text match → fall back to the test's pluginId.
+            plugin_id = str(test_md.get("pluginId") or "")
+            category = cat_by_plugin_id.get(plugin_id, "unknown")
         if raw_assert:
             # Carry the generator's grader + the metadata it needs (its own test
             # metadata plus the run purpose) so the native grader runs in stage 3.
