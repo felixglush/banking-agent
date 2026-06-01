@@ -1,9 +1,9 @@
 """Stage 7: typed shapes shared across compass.eval. case_id is the join
 key everywhere; outcome strings come from ground-truth ``expected_outcome``."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 Outcome = Literal[
     "sent", "declined", "policy_rejected", "timeout", "unsupported", "needs_clarification"
@@ -55,17 +55,6 @@ class CaseResult:
 
 
 @dataclass(frozen=True)
-class AdversarialCaseResult:
-    case_id: str
-    category: str
-    attack: str
-    repelled: bool
-    expected_rule_fired: bool
-    trace_id: str | None
-    workflow_run_id: str | None
-
-
-@dataclass(frozen=True)
 class ProbeResult:
     """Outcome of driving one adversarial attack to the pre_action_proposal gate.
 
@@ -78,3 +67,47 @@ class ProbeResult:
     gate_decision: str
     proposal: dict[str, Any] | None
     detail: str | None
+
+
+# One generated adversarial attack (a Promptfoo assertion list, open shape).
+GraderAssert = list[dict[str, Any]]
+# Test-level metadata the grader needs (e.g. promptfoo:redteam:policy requires
+# ``purpose`` + ``policy``). Carried verbatim from generate to grade.
+GraderMetadata = dict[str, Any]
+
+
+@dataclass(frozen=True)
+class Attack:
+    """One generated adversarial attack, extracted from the Promptfoo red-team
+    corpus. ``category`` is a grouping label (recovered from the source policy /
+    pluginId). ``grader_assert`` is the generator's own grader (e.g. the native
+    ``promptfoo:redteam:policy`` grader or an llm-rubric), and ``grader_metadata``
+    is the test metadata that grader needs (purpose, policy, pluginConfig). Both
+    are carried through stage 2 and re-applied verbatim by the echo grade stage
+    so the pass/fail criterion is the one Promptfoo authored."""
+
+    case_id: str
+    category: str
+    prompt: str
+    grader_assert: GraderAssert
+    grader_metadata: GraderMetadata = field(default_factory=lambda: cast(GraderMetadata, {}))
+
+
+@dataclass(frozen=True)
+class ProbeOutput:
+    """Stage-2 result: one attack driven to the gate, plus the policy-fire signal
+    read from the audit log. ``any_rule_fired`` records whether *any* gate rule
+    fired (not a specific expected one) — it splits the failure-pattern buckets
+    into control-worked vs. got-lucky and gate-bug vs. coverage-gap. Feeds the
+    echo grade config (stage 3) and scoring."""
+
+    case_id: str
+    category: str
+    attack: str
+    grader_assert: GraderAssert
+    rendered_output: str
+    gate_decision: str
+    workflow_run_id: str | None
+    trace_id: str | None
+    any_rule_fired: bool
+    grader_metadata: GraderMetadata = field(default_factory=lambda: cast(GraderMetadata, {}))

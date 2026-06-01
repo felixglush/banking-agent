@@ -1,47 +1,37 @@
-"""Parse Promptfoo's EvaluateSummaryV3 results JSON into the harness's
-adversarial case model. Pure; defensive about optional keys (the schema carries
-many fields we don't use)."""
+"""Parse Promptfoo's EvaluateSummaryV3 results JSON. Pure; defensive about
+optional keys (the schema carries many fields we don't use).
+
+Stage 3 of the adversarial pipeline grades with an echo provider, so the only
+signal to read back is per-case pass/fail keyed on the stable case_id — the
+policy-fire signal is resolved in stage 2 (``adversarial_run.run_probes``)."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any, cast
 
-from compass.eval.types import AdversarialCaseResult
-
 _Dict = Mapping[str, Any]
 
 
-def _named_score(result: _Dict, name: str) -> float:
-    named = cast(_Dict, result.get("namedScores") or {})
-    if name in named:
-        return float(named[name])
-    # Fallback: scan per-assertion componentResults for the metric.
-    grading = cast(_Dict, result.get("gradingResult") or {})
-    for comp in cast("list[_Dict]", grading.get("componentResults") or []):
-        assertion = cast(_Dict, comp.get("assertion") or {})
-        if assertion.get("metric") == name:
-            return float(comp.get("score", 0.0))
-    return 0.0
+def _iter_results(data: _Dict) -> list[_Dict]:
+    """`promptfoo eval -o file.json` writes the EvaluateSummaryV3 envelope:
+    {evalId, results: {results: [...], ...}}. The per-test list is nested one
+    level under "results"; a raw list (older shapes) is handled too."""
+    raw: Any = data.get("results")
+    if isinstance(raw, Mapping):
+        raw = cast(_Dict, raw).get("results")
+    return cast("list[_Dict]", raw or [])
 
 
-def parse_results(data: _Dict) -> list[AdversarialCaseResult]:
-    out: list[AdversarialCaseResult] = []
-    for idx, r in enumerate(cast("list[_Dict]", data.get("results") or [])):
+def parse_grade_results(data: _Dict) -> dict[str, bool]:
+    """Stage-3 echo-grade results → {case_id: repelled}. The case_id is the
+    stable join key stamped into each grade test's metadata; ``success`` is the
+    generator's grader verdict (True = the attack was repelled)."""
+    out: dict[str, bool] = {}
+    for r in _iter_results(data):
         test_case = cast(_Dict, r.get("testCase") or {})
         test_md = cast(_Dict, test_case.get("metadata") or {})
-        response = cast(_Dict, r.get("response") or {})
-        resp_md = cast(_Dict, response.get("metadata") or {})
-        vars_ = cast(_Dict, r.get("vars") or {})
-        out.append(
-            AdversarialCaseResult(
-                case_id=str(r.get("id") or test_md.get("case_id") or f"adv_{idx:04d}"),
-                category=str(test_md.get("category", "unknown")),
-                attack=str(vars_.get("prompt", "")),
-                repelled=bool(r.get("success", False)),
-                expected_rule_fired=_named_score(r, "adversarial_policy_fire") >= 1.0,
-                trace_id=cast("str | None", resp_md.get("trace_id")),
-                workflow_run_id=cast("str | None", resp_md.get("workflow_run_id")),
-            )
-        )
+        case_id = test_md.get("case_id")
+        if case_id is not None:
+            out[str(case_id)] = bool(r.get("success", False))
     return out
