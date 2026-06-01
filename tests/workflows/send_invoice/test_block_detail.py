@@ -35,3 +35,18 @@ def test_falls_back_to_error_type_when_no_rule_ids() -> None:
 
 def test_handles_missing_cause() -> None:
     assert _block_detail(None) == "blocked"
+
+
+def test_pre_action_proposal_block_names_the_billing_rule() -> None:
+    # Same helper serves the pre_action_proposal + pre_execute block sites, where
+    # the realistic fired rules are billing-integrity / amount-cap rules.
+    err = ApplicationError(
+        "policy blocked",
+        {
+            "phase": "pre_action_proposal",
+            "rule_ids_fired": ["prohibit_exceed_contract_cap"],
+            "violations": [{"rule_id": "prohibit_exceed_contract_cap", "message": "over cap"}],
+        },
+        type="PolicyDecisionError",
+    )
+    assert _block_detail(err) == "policy blocked: prohibit_exceed_contract_cap"

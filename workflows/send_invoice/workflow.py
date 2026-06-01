@@ -410,6 +410,7 @@ class SendInvoiceWorkflow:
                         )
                         agent_input = req.user_message + feedback
                         continue
+                    detail = _block_detail(cause)
                     await self._audit(
                         phase="pre_action_proposal",
                         event_kind="policy_rejected",
@@ -419,9 +420,9 @@ class SendInvoiceWorkflow:
                     self._gate = GateSnapshot(
                         status="policy_rejected",
                         proposal=proposal.model_dump(),
-                        detail=str(e),
+                        detail=detail,
                     )
-                    return WorkflowResult(outcome="policy_rejected", detail=str(e))
+                    return WorkflowResult(outcome="policy_rejected", detail=detail)
 
         assert payload is not None
         self._policy_hash = payload.policy_hash
@@ -486,6 +487,7 @@ class SendInvoiceWorkflow:
         except ActivityError as e:
             cause = e.cause if isinstance(e.cause, ApplicationError) else None
             err_type = cause.type if cause else None
+            detail = _block_detail(cause)
             self._next_seq += 4  # at most 2 pre_execute rules
             await self._audit(
                 phase="pre_execute",
@@ -494,7 +496,7 @@ class SendInvoiceWorkflow:
                 decision="block",
                 actor={"user_id": approval.approver_id, "auth_method": "demo_cli"},
             )
-            return WorkflowResult(outcome="policy_rejected", detail=str(e))
+            return WorkflowResult(outcome="policy_rejected", detail=detail)
 
         # ---- 6. side effect -------------------------------------------------
         invoice_id = await workflow.execute_activity(
