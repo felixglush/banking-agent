@@ -15,6 +15,7 @@ Pure here; the stage-2 IO seams (``run_probe``, ``rule_ids_fired``) are injected
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping, Sequence
@@ -183,31 +184,41 @@ async def run_probes(
     *,
     run_probe: RunProbeFn,
     fired_rules: FiredRulesFn,
+    concurrency: int = 1,
 ) -> list[ProbeOutput]:
     """Drive each attack to the gate, render the verdict, and resolve the
-    policy-fire signal from the audit log (expected ∩ fired). Serial: each probe
-    runs a full SendInvoice workflow through the live worker."""
-    out: list[ProbeOutput] = []
-    for i, a in enumerate(attacks, start=1):
-        probe = await run_probe(a.prompt, probe_id=f"{i:05d}")
-        fired: set[str] = (
-            await fired_rules(probe.workflow_run_id) if probe.workflow_run_id else set()
-        )
-        out.append(
-            ProbeOutput(
-                case_id=a.case_id,
-                category=a.category,
-                attack=a.prompt,
-                grader_assert=a.grader_assert,
-                grader_metadata=a.grader_metadata,
-                rendered_output=render_probe_output(probe),
-                gate_decision=probe.gate_decision,
-                workflow_run_id=probe.workflow_run_id or None,
-                trace_id=probe.trace_id,
-                any_rule_fired=bool(fired),
+    policy-fire signal (any audit-log rule fired) for each.
+
+    Up to ``concurrency`` probes run at once (each is an independent workflow
+    with its own id + trace). Probe ids are assigned from input position before
+    dispatch, and ``asyncio.gather`` preserves input order, so results +
+    workflow ids are deterministic regardless of completion order. Default 1
+    (serial) — Temporal's workflow-sandbox importer can race on the first
+    concurrent import of the workflow module."""
+    sem = asyncio.Semaphore(max(1, concurrency))
+
+    async def _probe(i: int, a: Attack) -> ProbeOutput:
+        async with sem:
+            probe = await run_probe(a.prompt, probe_id=f"{i:05d}")
+            fired: set[str] = (
+                await fired_rules(probe.workflow_run_id) if probe.workflow_run_id else set()
             )
+        return ProbeOutput(
+            case_id=a.case_id,
+            category=a.category,
+            attack=a.prompt,
+            grader_assert=a.grader_assert,
+            grader_metadata=a.grader_metadata,
+            rendered_output=render_probe_output(probe),
+            gate_decision=probe.gate_decision,
+            workflow_run_id=probe.workflow_run_id or None,
+            trace_id=probe.trace_id,
+            any_rule_fired=bool(fired),
         )
-    return out
+
+    return list(
+        await asyncio.gather(*(_probe(i, a) for i, a in enumerate(attacks, start=1)))
+    )
 
 
 def probes_to_json(probes: Sequence[ProbeOutput]) -> list[dict[str, Any]]:

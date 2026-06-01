@@ -202,6 +202,45 @@ async def test_run_probes_skips_audit_query_when_no_workflow_run_id() -> None:
     assert called == []
 
 
+async def test_run_probes_concurrency_overlaps_and_preserves_order() -> None:
+    import asyncio  # noqa: PLC0415
+
+    attacks = [Attack(f"c{i}", "amount_manipulation", f"atk{i}", []) for i in range(4)]
+    # A gate that records how many probes are in-flight at once, and blocks until
+    # all have arrived — proving they run concurrently (would deadlock if serial).
+    in_flight = 0
+    peak = 0
+    barrier = asyncio.Event()
+    arrived = 0
+
+    async def run_probe(attack: str, *, probe_id: str) -> ProbeResult:
+        nonlocal in_flight, peak, arrived
+        in_flight += 1
+        peak = max(peak, in_flight)
+        arrived += 1
+        if arrived >= 2:  # concurrency=2 → release once both are in-flight
+            barrier.set()
+        await barrier.wait()
+        in_flight -= 1
+        return ProbeResult(f"adv-{probe_id}", None, "permitted", {"i": attack}, None)
+
+    async def fired_rules(wfid: str) -> set[str]:
+        return set()
+
+    out = await run_probes(
+        attacks, run_probe=run_probe, fired_rules=fired_rules, concurrency=2
+    )
+    assert peak == 2  # two probes overlapped (serial would peak at 1)
+    # order preserved despite concurrent completion, and probe ids are stable
+    assert [p.case_id for p in out] == ["c0", "c1", "c2", "c3"]
+    assert [p.workflow_run_id for p in out] == [
+        "adv-00001",
+        "adv-00002",
+        "adv-00003",
+        "adv-00004",
+    ]
+
+
 # ── stage 2 output: grade config + probes round-trip ───────────────────────
 
 

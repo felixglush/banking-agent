@@ -91,7 +91,12 @@ async def _cmd_run(ns: argparse.Namespace) -> int:
     runner = TemporalWorkflowRunner(client=client, task_queue=ns.task_queue, langfuse_client=None)
     audit = PostgresAuditLogSource(dsn=dsn)
 
-    probes = await run_probes(attacks, run_probe=runner.run_probe, fired_rules=audit.rule_ids_fired)
+    probes = await run_probes(
+        attacks,
+        run_probe=runner.run_probe,
+        fired_rules=audit.rule_ids_fired,
+        concurrency=ns.concurrency,
+    )
 
     ns.grade_config.write_text(yaml.safe_dump(build_grade_config(probes), sort_keys=False))
     ns.probes.write_text(json.dumps(probes_to_json(probes), indent=2))
@@ -129,6 +134,13 @@ def _build_parser() -> argparse.ArgumentParser:
     r.add_argument("--probes", type=Path, required=True, help="probes JSON to write")
     r.add_argument("--task-queue", default=os.environ.get("ADVERSARIAL_TASK_QUEUE", "send-invoice"))
     r.add_argument("--temporal-target", default=None)
+    r.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="max probes run in parallel (default 1; serial avoids a Temporal "
+        "workflow-sandbox first-import race). Raise to cut wall-clock.",
+    )
 
     s = sub.add_parser("score", help="bucket verdicts + exit code (local, no DB/Langfuse)")
     s.add_argument("--probes", type=Path, required=True)
