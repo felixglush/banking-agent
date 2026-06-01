@@ -73,6 +73,24 @@ with workflow.unsafe.imports_passed_through():
 _POLICY_DECISION_RETRY = RetryPolicy(maximum_attempts=1)
 
 
+def _block_detail(cause: ApplicationError | None) -> str:
+    """Legible block reason for a GateSnapshot / WorkflowResult, built from a
+    PolicyDecisionError's structured details. Names the fired rule(s) instead of
+    Temporal's generic "Activity task failed". Falls back to the error type for a
+    genuine engine/infra failure (no rule_ids_fired), or "blocked" if absent.
+
+    Pure/deterministic — runs in the workflow."""
+    try:
+        raw: object = cause.details[0] if cause and cause.details else {}
+        if isinstance(raw, dict):
+            rule_ids = cast(dict[str, Any], raw).get("rule_ids_fired", [])
+            if isinstance(rule_ids, list) and rule_ids:
+                return "policy blocked: " + ", ".join(str(r) for r in cast(list[Any], rule_ids))
+    except Exception:  # noqa: BLE001 — detail is best-effort
+        pass
+    return f"blocked ({cause.type})" if cause and cause.type else "blocked"
+
+
 def _heal_feedback(cause: ApplicationError | None) -> str:
     """Build agent-facing feedback from a PolicyDecisionError's violations.
 
@@ -191,6 +209,10 @@ class SendInvoiceWorkflow:
         except ActivityError as e:
             cause = e.cause if isinstance(e.cause, ApplicationError) else None
             err_type = cause.type if cause else None
+            # Legible reason (names the fired rule) instead of Temporal's generic
+            # "Activity task failed" — surfaced on the gate snapshot + result so an
+            # adversarial probe / operator can tell a scope-gate block from a crash.
+            detail = _block_detail(cause)
             # One rule at this phase today; bump conservatively past
             # any sink writes the activity made before raising.
             self._next_seq += 2
@@ -205,8 +227,8 @@ class SendInvoiceWorkflow:
                 },
                 decision="block",
             )
-            self._gate = GateSnapshot(status="unsupported", detail=str(e))
-            return WorkflowResult(outcome="unsupported", detail=str(e))
+            self._gate = GateSnapshot(status="unsupported", detail=detail)
+            return WorkflowResult(outcome="unsupported", detail=detail)
 
         self._policy_hash = payload.policy_hash
         self._next_seq = payload.next_sequence_no - 1
