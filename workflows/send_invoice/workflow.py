@@ -65,11 +65,30 @@ with workflow.unsafe.imports_passed_through():
     from workflows.send_invoice.types import (
         ApprovalDecision,
         ClarificationResponse,
+        GateSnapshot,
         SendInvoiceRequest,
         WorkflowResult,
     )
 
 _POLICY_DECISION_RETRY = RetryPolicy(maximum_attempts=1)
+
+
+def _block_detail(cause: ApplicationError | None) -> str:
+    """Legible block reason for a GateSnapshot / WorkflowResult, built from a
+    PolicyDecisionError's structured details. Names the fired rule(s) instead of
+    Temporal's generic "Activity task failed". Falls back to the error type for a
+    genuine engine/infra failure (no rule_ids_fired), or "blocked" if absent.
+
+    Pure/deterministic — runs in the workflow."""
+    try:
+        raw: object = cause.details[0] if cause and cause.details else {}
+        if isinstance(raw, dict):
+            rule_ids = cast(dict[str, Any], raw).get("rule_ids_fired", [])
+            if isinstance(rule_ids, list) and rule_ids:
+                return "policy blocked: " + ", ".join(str(r) for r in cast(list[Any], rule_ids))
+    except Exception:  # noqa: BLE001 — detail is best-effort
+        pass
+    return f"blocked ({cause.type})" if cause and cause.type else "blocked"
 
 
 def _heal_feedback(cause: ApplicationError | None) -> str:
@@ -109,6 +128,7 @@ class SendInvoiceWorkflow:
         self._policy_hash: str | None = None
         self._tool_calls: list[ToolCallRecord] = []
         self._reasoning_text: str = ""
+        self._gate = GateSnapshot()
 
     @workflow.signal(name="clarify")
     async def clarify(self, response: ClarificationResponse) -> None:
@@ -126,6 +146,11 @@ class SendInvoiceWorkflow:
             )
             return
         self._approval = decision
+
+    @workflow.query(name="gate_snapshot")
+    def gate_snapshot(self) -> GateSnapshot:
+        """Read-only adversarial probe surface: the gate verdict + proposal."""
+        return self._gate
 
     @workflow.query(name="agent_activity")
     def agent_activity(self) -> dict[str, Any]:
@@ -156,6 +181,9 @@ class SendInvoiceWorkflow:
                 payload={"user_message": req.user_message},
                 decision="block",
             )
+            self._gate = GateSnapshot(
+                status="unsupported", detail="scope gate returned no classification"
+            )
             return WorkflowResult(
                 outcome="unsupported",
                 detail="Scope gate returned no structured classification.",
@@ -181,6 +209,10 @@ class SendInvoiceWorkflow:
         except ActivityError as e:
             cause = e.cause if isinstance(e.cause, ApplicationError) else None
             err_type = cause.type if cause else None
+            # Legible reason (names the fired rule) instead of Temporal's generic
+            # "Activity task failed" — surfaced on the gate snapshot + result so an
+            # adversarial probe / operator can tell a scope-gate block from a crash.
+            detail = _block_detail(cause)
             # One rule at this phase today; bump conservatively past
             # any sink writes the activity made before raising.
             self._next_seq += 2
@@ -195,7 +227,8 @@ class SendInvoiceWorkflow:
                 },
                 decision="block",
             )
-            return WorkflowResult(outcome="unsupported", detail=str(e))
+            self._gate = GateSnapshot(status="unsupported", detail=detail)
+            return WorkflowResult(outcome="unsupported", detail=detail)
 
         self._policy_hash = payload.policy_hash
         self._next_seq = payload.next_sequence_no - 1
@@ -246,6 +279,9 @@ class SendInvoiceWorkflow:
                         event_kind="agent_no_output",
                         payload={"user_message": req.user_message},
                     )
+                    self._gate = GateSnapshot(
+                        status="no_proposal", detail="agent returned no structured proposal"
+                    )
                     return WorkflowResult(
                         outcome="policy_rejected",
                         detail="Agent returned no structured proposal.",
@@ -273,6 +309,7 @@ class SendInvoiceWorkflow:
                                 timeout=timedelta(seconds=req.clarification_timeout_seconds),
                             )
                         except TimeoutError:
+                            self._gate = GateSnapshot(status="needs_clarification", detail=question)
                             return WorkflowResult(outcome="needs_clarification", detail=question)
                     answer = self._clarification
                     assert answer is not None
@@ -373,17 +410,24 @@ class SendInvoiceWorkflow:
                         )
                         agent_input = req.user_message + feedback
                         continue
+                    detail = _block_detail(cause)
                     await self._audit(
                         phase="pre_action_proposal",
                         event_kind="policy_rejected",
                         payload={"error_type": err_type, "message": str(e)},
                         decision="block",
                     )
-                    return WorkflowResult(outcome="policy_rejected", detail=str(e))
+                    self._gate = GateSnapshot(
+                        status="policy_rejected",
+                        proposal=proposal.model_dump(),
+                        detail=detail,
+                    )
+                    return WorkflowResult(outcome="policy_rejected", detail=detail)
 
         assert payload is not None
         self._policy_hash = payload.policy_hash
         self._next_seq = payload.next_sequence_no - 1  # advance to last used
+        self._gate = GateSnapshot(status="permitted", proposal=proposal.model_dump())
 
         # ---- 4. human approval wait -----------------------------------------
         try:
@@ -443,6 +487,7 @@ class SendInvoiceWorkflow:
         except ActivityError as e:
             cause = e.cause if isinstance(e.cause, ApplicationError) else None
             err_type = cause.type if cause else None
+            detail = _block_detail(cause)
             self._next_seq += 4  # at most 2 pre_execute rules
             await self._audit(
                 phase="pre_execute",
@@ -451,7 +496,7 @@ class SendInvoiceWorkflow:
                 decision="block",
                 actor={"user_id": approval.approver_id, "auth_method": "demo_cli"},
             )
-            return WorkflowResult(outcome="policy_rejected", detail=str(e))
+            return WorkflowResult(outcome="policy_rejected", detail=detail)
 
         # ---- 6. side effect -------------------------------------------------
         invoice_id = await workflow.execute_activity(

@@ -14,11 +14,11 @@ import argparse
 import asyncio
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from compass.eval.gitmeta import git_dirty, git_sha
 from compass.eval.orchestrator import EvalReport
 
 VALID_SUITES = {"functional", "policy_compliance", "cost_latency"}
@@ -119,34 +119,6 @@ def _resolve_dataset_name(ns: argparse.Namespace, ground_truth_root: Path) -> st
         if name:
             return cast(str, name)
     return f"{ns.workflow}_v0_1"
-
-
-def _git_sha() -> str:
-    """HEAD of the invoking repo (cwd), not of the compass install."""
-    try:
-        return (
-            subprocess.check_output(
-                ["git", "rev-parse", "HEAD"],
-            )
-            .decode()
-            .strip()
-        )
-    except subprocess.CalledProcessError:
-        return "unknown"
-
-
-def _git_dirty() -> bool:
-    try:
-        out = (
-            subprocess.check_output(
-                ["git", "status", "--porcelain"],
-            )
-            .decode()
-            .strip()
-        )
-        return bool(out)
-    except subprocess.CalledProcessError:
-        return False
 
 
 async def amain(argv: list[str]) -> int:
@@ -265,14 +237,14 @@ async def amain(argv: list[str]) -> int:
                 cases=cases,
                 suites=suites,
                 mode=mode,
-                git_sha=_git_sha(),
+                git_sha=git_sha(),
                 rule_fire_source=rule_src,
                 score_sink=score_sink,
                 eval_run_store=eval_store,
                 langfuse_client=langfuse_client,
                 invoice_lookup=invoice_lookup,
                 holdout_justification=ns.holdout_justification,
-                host_git_dirty=_git_dirty(),
+                host_git_dirty=git_dirty(),
                 policy_enabled=True,
                 concurrency=ns.concurrency,
             )
@@ -283,14 +255,14 @@ async def amain(argv: list[str]) -> int:
                     cases=cases,
                     suites=suites,
                     mode=mode,
-                    git_sha=_git_sha(),
+                    git_sha=git_sha(),
                     rule_fire_source=rule_src,
                     score_sink=score_sink,
                     eval_run_store=eval_store,
                     langfuse_client=langfuse_client,
                     invoice_lookup=invoice_lookup,
                     holdout_justification=ns.holdout_justification,
-                    host_git_dirty=_git_dirty(),
+                    host_git_dirty=git_dirty(),
                     policy_enabled=False,
                     concurrency=ns.concurrency,
                 )
@@ -305,14 +277,14 @@ async def amain(argv: list[str]) -> int:
                 cases=cases,
                 suites=suites,
                 mode=mode,
-                git_sha=_git_sha(),
+                git_sha=git_sha(),
                 rule_fire_source=rule_src,
                 score_sink=score_sink,
                 eval_run_store=eval_store,
                 langfuse_client=langfuse_client,
                 invoice_lookup=invoice_lookup,
                 holdout_justification=ns.holdout_justification,
-                host_git_dirty=_git_dirty(),
+                host_git_dirty=git_dirty(),
                 concurrency=ns.concurrency,
             )
     except HoldoutCapExceeded as e:

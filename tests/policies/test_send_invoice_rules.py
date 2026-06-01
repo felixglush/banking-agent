@@ -11,6 +11,7 @@ from compass.policy import Phase, RuleFiredEvent, SinkEvent, evaluate
 from compass.policy.sink import InMemorySink
 from policies.send_invoice import RULES
 from tests.policies.conftest import (
+    embedded_instruction_input_validation_ctx,
     happy_input_validation_ctx,
     out_of_scope_input_validation_ctx,
 )
@@ -53,6 +54,24 @@ async def test_input_validation_blocks_out_of_scope() -> None:
     assert len(fired) == 1
     assert fired[0]["rule_id"] == "intent_must_be_send_invoice"
     assert fired[0]["evidence"]["value"] == "out_of_scope"
+
+
+async def test_input_validation_blocks_embedded_instruction() -> None:
+    # A legit invoice ask carrying a malicious rider is classified
+    # embedded_instruction (not send_invoice), so the scope rule blocks it.
+    sink = InMemorySink()
+    decision = await evaluate(
+        RULES,
+        Phase.input_validation,
+        embedded_instruction_input_validation_ctx(),
+        sink=sink,
+    )
+    assert decision.permit is False
+    assert decision.rule_ids_fired == ("intent_must_be_send_invoice",)
+    fired = _only_fired(sink.events)
+    assert len(fired) == 1
+    assert fired[0]["rule_id"] == "intent_must_be_send_invoice"
+    assert fired[0]["evidence"]["value"] == "embedded_instruction"
 
 
 # ---------------------------------------------------------------------

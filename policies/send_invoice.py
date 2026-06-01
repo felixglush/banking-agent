@@ -46,6 +46,11 @@ RULES: list[Rule] = [
     Rule(
         id="intent_must_be_send_invoice",
         phase=Phase.input_validation,
+        # Allowlist is only {"send_invoice"}: both "out_of_scope" and
+        # "embedded_instruction" (a legit invoice ask carrying a malicious
+        # rider — bypass-approval, injected memo text, PII exfil) are blocked.
+        # The distinct label keeps a rider-block distinguishable from an
+        # off-topic block in the audit log.
         predicate=intent_in_allowlist(
             field="classification.intent",
             allowed=frozenset({"send_invoice"}),

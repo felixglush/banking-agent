@@ -251,11 +251,12 @@ DO $$ BEGIN
       CHECK (mode = 'train' OR length(trim(holdout_justification)) > 0);
 EXCEPTION WHEN duplicate_object THEN END $$;
 
-DO $$ BEGIN
-  ALTER TABLE eval_runs
-    ADD CONSTRAINT eval_runs_suite_names_valid
-      CHECK (suite_names <@ ARRAY['functional','policy_compliance','cost_latency']::text[]);
-EXCEPTION WHEN duplicate_object THEN END $$;
+-- Drop-and-recreate (not a guarded ADD) so the allowed-suite list stays in
+-- sync when a new suite is introduced — Stage 8 added 'adversarial'.
+ALTER TABLE eval_runs DROP CONSTRAINT IF EXISTS eval_runs_suite_names_valid;
+ALTER TABLE eval_runs
+  ADD CONSTRAINT eval_runs_suite_names_valid
+    CHECK (suite_names <@ ARRAY['functional','policy_compliance','cost_latency','adversarial']::text[]);
 
 COMMENT ON COLUMN eval_runs.run_id IS
   'Stable identifier (uuid4 hex). Used as the Langfuse Dataset Run name; the join key from Postgres to Langfuse for the run.';

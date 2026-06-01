@@ -2,27 +2,28 @@
 
 A durable Temporal workflow that wraps an OpenAI Agents SDK agent
 loop, gates on a human approval signal, then writes the invoice and
-an audit row. Stage 5 added the policy engine; Stage 6 added the
-scope-gate classifier at workflow entry. Full design in:
+an audit row. 
+
+Diagram: https://app.excalidraw.com/s/AfsNGrQkY99/55Mn7raUZsW
 
 - [`docs/superpowers/specs/2026-05-27-stage-4-send-invoice-workflow-design.md`](../../docs/superpowers/specs/2026-05-27-stage-4-send-invoice-workflow-design.md)
 - [`docs/superpowers/specs/2026-05-27-stage-5-policy-engine-design.md`](../../docs/superpowers/specs/2026-05-27-stage-5-policy-engine-design.md)
 - [`docs/superpowers/specs/2026-05-27-stage-6-intent-classifier-design.md`](../../docs/superpowers/specs/2026-05-27-stage-6-intent-classifier-design.md)
+- [`docs/superpowers/specs/2026-05-31-policy-drift-reevaluation-design.md`](../../docs/superpowers/specs/2026-05-31-policy-drift-reevaluation-design.md)
 
-Build-plan §Stage 4, §Stage 5, §Stage 6 are the contracts.
 
 ## Components
 
 | File | What it owns |
 | --- | --- |
-| `types.py` | Pydantic models (`SendInvoiceRequest`, `InvoiceProposal`, `LineItemProposal`, `ApprovalDecision`, `PolicyDecisionPayload`, `WorkflowResult`). |
-| `agents.py` | `build_main_agent(mcp_server)` — single agent, `output_type=InvoiceProposal`, default model `gpt-4.1-mini` (override `OPENAI_MODEL`). |
-| `scope_gate.py` | `build_scope_gate_agent()` + `IntentClassification` (Pydantic) — no MCP, no tools. Default model `gpt-4.1-mini` (override `OPENAI_SCOPE_GATE_MODEL`). |
-| `context.py` | Pure projections over `RunResult` → policy context dicts; `hash_proposal`. |
+| `types.py` | Pydantic models |
+| `agents.py` | `build_main_agent(mcp_server)` — single agent, `output_type=InvoiceProposal` |
+| `scope_gate.py` | `build_scope_gate_agent()` + `IntentClassification` |
+| `context.py` | Pure projections over `RunResult` → generate policy context dicts |
 | `primitives.py` | App-specific Billing-integrity primitives (`require_amount_source`, `contract_consistency_check`, `prohibit_exceed_contract_cap`, `currency_consistency_check`). |
-| `activities.py` | `evaluate_policy` (phase-switched; snapshot + sink in one tx), `execute_send` (idempotent invoice insert), `audit_log` (append-only; `is_terminal_event` runs audit_validation). |
-| `workflow.py` | `SendInvoiceWorkflow` — scope-gate → input_validation gate → main agent → pre_action_proposal → wait_condition(approved) → pre_execute → execute_send → audit_log. |
-| `worker.py` | Loads `.env.local`, wires `OpenAIAgentsPlugin` + `StatefulMCPServerProvider("bank", …)`, runs the worker. |
+| `activities.py` | `evaluate_policy`, `execute_send` (idempotent invoice insert), append-only `audit_log`, `resolve_invoice_context` (DB-direct re-fetch of customer/KYC + contract for the `pre_execute` re-evaluation). |
+| `workflow.py` | Where the Temporal `SendInvoiceWorkflow` is defined |
+| `worker.py` | Runs the workflow via activities |
 
 ## Workflow diagram
 
@@ -56,10 +57,13 @@ flowchart TD
     AuditSignal --> Approved{approved?}
     Approved -- no --> AuditDeclined[audit: declined]
     AuditDeclined --> EndDeclined([declined])
-    Approved -- yes --> PreExecGate{{evaluate_policy<br/>phase=pre_execute}}
-    PreExecGate -- block --> AuditDriftReject[audit: policy_rejected<br/>drift/silent-mod]
+    Approved -- yes --> ReResolve[resolve_invoice_context<br/>re-fetch customer/KYC + contract]
+    ReResolve --> PreExecGate{{evaluate_policy<br/>re-run pre_action_proposal<br/>under current policy + tamper}}
+    PreExecGate -- block / tamper --> AuditDriftReject[audit: policy_rejected<br/>re-eval block / silent-mod]
     AuditDriftReject --> EndRejected3([policy_rejected])
-    PreExecGate -- permit/escalate --> Execute[execute_send]
+    PreExecGate -- unapproved escalate --> AuditReapproval[audit: reapproval_required<br/>policy tightened since approval]
+    AuditReapproval -. reset _approval, guard rounds .-> Wait
+    PreExecGate -- permit --> Execute[execute_send]
     Execute --> AuditExecuted[audit: executed<br/>is_terminal_event=True<br/>runs audit_validation]
     AuditExecuted --> EndSent([sent + invoice_id])
 
@@ -72,20 +76,11 @@ flowchart TD
     classDef activity fill:#f0e6ff,stroke:#6f42c1,color:#000
     classDef policy fill:#e8f7e8,stroke:#2da44e,color:#000
     classDef signal fill:#e8f7e8,stroke:#2da44e,color:#000
-    class AuditNoClass,AuditUnsupported,AuditIntent,AuditNoOut,AuditPolReject,AuditTimeout,AuditSignal,AuditDeclined,AuditDriftReject,AuditExecuted,AuditDup audit
+    class AuditNoClass,AuditUnsupported,AuditIntent,AuditNoOut,AuditPolReject,AuditTimeout,AuditSignal,AuditDeclined,AuditDriftReject,AuditReapproval,AuditExecuted,AuditDup audit
     class EndUnsupported1,EndUnsupported2,EndRejected1,EndRejected2,EndRejected3,EndTimeout,EndDeclined,EndSent terminal
-    class ScopeGate,Agent,Execute activity
+    class ScopeGate,Agent,ReResolve,Execute activity
     class InputGate,ProposalGate,PreExecGate policy
 ```
-
-### Policy phases wired in this workflow
-
-| Phase | Where it fires | What it checks |
-| --- | --- | --- |
-| `input_validation` | After scope-gate `Runner.run`, before main agent | Classifier output (`intent_must_be_send_invoice`). |
-| `pre_action_proposal` | After main agent `Runner.run`, before approval wait | Resolution, KYC, billing integrity, evidence citation, amount cap (8 rules). |
-| `pre_execute` | After approval signal, before `execute_send` | Proposal-hash drift, policy-hash drift between proposal and execute (2 rules). |
-| `audit_validation` | Inside `audit_log` on the terminal `executed` row only | Audit-completeness defect detectors (2 rules). |
 
 Every audit-write and activity above is allocated a monotonic
 `sequence_no` from workflow state, so retries collide on the
@@ -153,10 +148,16 @@ line item into `invoice_line_items`, and an `audit_log` chain whose
 exact shape depends on which rules fire. On a clean send-invoice run
 with permitted policy at every phase, the rows are:
 `intent_classified` (scope-gate permitted) →
-eight `rule_skipped` rows at `pre_action_proposal` →
+nine `rule_skipped` rows at `pre_action_proposal` →
 `approval_signal` →
-two `rule_skipped` rows at `pre_execute` →
+`pre_execute_reevaluation` (marker) →
+nine `rule_skipped` rows (the `pre_action_proposal` rules re-evaluated under
+the current policy) + one `rule_skipped` row (the `pre_execute` tamper check) →
 `executed` (plus two `rule_skipped` rows at `audit_validation`).
+If policy tightened during the approval wait, the re-evaluation instead emits a
+`rule_fired` + `reapproval_required`, the workflow loops back to
+`wait_condition`, and a second `approval_signal` follows (bounded by
+`max_reapproval_rounds`).
 Out-of-scope requests short-circuit after the scope gate with a
 `rule_fired`-then-`unsupported` pair and never reach the main agent.
 
@@ -187,9 +188,7 @@ Three layers of coverage:
 
 The live OpenAI + MCP path is exercised by the demo above — not in CI.
 
-## Stage 4 interop rules wired in code
-
-From build-plan §Stage 4, marked with comments where they live:
+## Rules wired in code
 
 1. `execute_send` is a workflow-step activity, never exposed to the
    agent as `activity_as_tool`. The agent's tool surface is read-only
