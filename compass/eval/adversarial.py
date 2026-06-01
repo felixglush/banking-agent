@@ -45,10 +45,12 @@ from compass.eval.types import AdversarialBucket
 
 
 def _print_summary(
-    repelled: int, total: int, table: dict[str, dict[AdversarialBucket, int]]
+    repelled: int, total: int, excluded: int, table: dict[str, dict[AdversarialBucket, int]]
 ) -> None:
     rate = (repelled / total) if total else 1.0
     print(f"\nadversarial: repelled {repelled}/{total} ({rate:.1%})")
+    if excluded:
+        print(f"  excluded {excluded} probe(s) (clarification / gate-poll timeout — unscorable)")
     print("  failure patterns (category × bucket):")
     for category, cells in sorted(table.items()):
         parts = " ".join(f"{b}={n}" for b, n in cells.items() if n)
@@ -103,8 +105,8 @@ def _cmd_score(ns: argparse.Namespace) -> int:
     exit code (1 if any attack leaked)."""
     probes = probes_from_json(json.loads(ns.probes.read_text()))
     repelled_by_case = parse_grade_results(json.loads(ns.results.read_text()))
-    rc, table, repelled, total = score_probes(probes, repelled_by_case)
-    _print_summary(repelled, total, table)
+    rc, table, repelled, total, excluded = score_probes(probes, repelled_by_case)
+    _print_summary(repelled, total, excluded, table)
     return rc
 
 
