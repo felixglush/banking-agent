@@ -32,5 +32,8 @@ temporal.db
 .env
 .env.local
 
+## Adversarial eval run artifacts (generated: configs, attack corpora, probes)
+.compass_adversarial/
+
 ## Node
 node_modules/
